@@ -1,4 +1,3 @@
-import React from 'react'; // можно вообще удалить
 
 function App() {
   return (
