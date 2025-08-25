@@ -429,4 +429,85 @@ const App = () => {
                   </svg>
                 ) : (
                   <svg className="w-5 h-5 text-gray-700" fill="currentColor" viewBox="0 0 20 20">
-                    <path d="M17.293 13.293A8 8 0 
+                    <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z" />
+                  </svg>
+                )}
+              </button>
+              <div className="text-right">
+                <p className="text-sm font-medium">{user.name}</p>
+                <p className="text-xs capitalize">{user.role}</p>
+              </div>
+              <button
+                onClick={handleLogout}
+                className="bg-red-500 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-red-600 transition-colors"
+              >
+                Выйти
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Навигация */}
+      <nav className={`bg-white border-b transition-colors ${darkMode ? 'bg-gray-800 border-gray-700' : 'border-orange-200'}`}>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex space-x-8">
+            {[
+              { id: 'schedule', label: 'Расписание', icon: 'Calendar' },
+              { id: 'doctors', label: 'Персонал', icon: 'Users' },
+              { id: 'analytics', label: 'Аналитика', icon: 'BarChart2' },
+              { id: 'admin', label: 'Админка', icon: 'Settings' }
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
+                  activeTab === tab.id
+                    ? 'border-orange-600 text-orange-600'
+                    : darkMode
+                      ? 'border-transparent text-gray-300 hover:text-white hover:border-gray-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-orange-300'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </nav>
+
+      {/* Основное содержимое */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {isLoading ? (
+          <LoadingSpinner />
+        ) : error ? (
+          <ErrorDisplay message={error} onRetry={fetchDataFromIdent} />
+        ) : (
+          <div className="space-y-6">
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>Расписание на день</h2>
+                <p className={darkMode ? 'text-gray-400' : 'text-gray-600'}>Управление расписанием врачей и ассистентов</p>
+              </div>
+            </div>
+            
+            <div className={`bg-white rounded-xl shadow-sm p-6 transition-colors ${darkMode ? 'bg-gray-800 border-gray-700' : 'border-orange-200'}`}>
+              <p className="text-center text-gray-500 py-8">Основной функционал будет работать после успешного подключения к системе IDent</p>
+            </div>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+
+  return user ? (
+    <>
+      <MainInterface />
+      <NotificationModal />
+    </>
+  ) : (
+    <LoginScreen />
+  );
+};
+
+export default App;
