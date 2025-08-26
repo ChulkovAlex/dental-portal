@@ -1,108 +1,91 @@
-import React, { useState, FormEvent } from 'react';
-import { LogIn, User, Lock, Sun, Moon } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useDark } from '../hooks/useDark';
 
 export default function Login() {
-  const [loading, setLoading] = useState(false);
-  const [dark, setDark] = useState(false);
+  const [dark, toggleDark] = useDark();
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [visible, setVisible] = useState(false);
+  const navigate = useNavigate();
 
-  const handleLogin = (e: FormEvent) => {
+  // запускаем анимацию после монтирования
+  useEffect(() => {
+    setVisible(true);
+  }, []);
+
+  const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
-    setTimeout(() => {
-      localStorage.setItem('user', JSON.stringify({ name: 'Админ' }));
-      window.location.href = '/dashboard';
-    }, 800);
+    localStorage.setItem('user', JSON.stringify({ email }));
+    navigate('/dashboard');
   };
 
   return (
-    <div
-      className={`min-h-screen flex items-center justify-center p-4 transition-colors ${
-        dark ? 'bg-gray-900' : 'bg-gradient-to-br from-orange-50 via-white to-yellow-50'
-      }`}
-    >
-      <div className="w-full max-w-md">
-        {/* Логотип */}
-        <div className="flex justify-center mb-8">
-          <div className="w-24 h-24 bg-gradient-to-r from-orange-500 to-yellow-500 rounded-full flex items-center justify-center shadow-lg">
-            <LogIn className="w-12 h-12 text-white" />
-          </div>
+    <div className="min-h-screen flex items-center justify-center p-4 bg-page text-page">
+      {/* кнопка темы */}
+      <button
+        onClick={toggleDark}
+        className="absolute top-4 right-4 p-2 rounded-full bg-card border border-page"
+      >
+        <span className="text-xl">{dark ? '🌙' : '☀️'}</span>
+      </button>
+
+      {/* карточка с анимацией */}
+      <form
+        onSubmit={handleLogin}
+        className={`bg-card border border-page rounded-2xl shadow-xl w-full max-w-sm p-8 space-y-6 transition-all duration-700 transform ${visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}
+      >
+        <div className="flex justify-center mb-4">
+         <img src="/logo.png"  alt="Doc Denisenko" className="h-20 w-auto rounded-2xl shadow-lg"/>
         </div>
 
-        {/* Заголовок */}
-        <h1 className={`text-4xl font-bold text-center mb-2 ${dark ? 'text-white' : 'text-gray-900'}`}>
-          Клиника доктора Денисенко
-        </h1>
-        <p className={`text-center mb-8 ${dark ? 'text-gray-300' : 'text-gray-600'}`}>
-          Портал сотрудников клиники
-        </p>
+        <h1 className="text-2xl font-bold text-center">Клиника доктора Денисенко</h1>
 
-        {/* Форма */}
-        <form
-          onSubmit={handleLogin}
-          className={`bg-white rounded-2xl shadow-xl border border-orange-100 p-8 space-y-6 ${
-            dark ? 'bg-gray-800 border-gray-700' : ''
-          }`}
-        >
-          {/* Поле логин */}
-          <div>
-            <label className={`block text-sm font-medium mb-2 ${dark ? 'text-gray-200' : 'text-gray-700'}`}>
-              Имя пользователя
-            </label>
-            <div className="relative">
-              <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-              <input
-                required
-                className={`input-field pl-10 ${dark ? 'bg-gray-700 border-gray-600 text-white' : ''}`}
-                placeholder="Введите имя пользователя"
-              />
-            </div>
-          </div>
+        <input
+          type="email"
+          required
+          placeholder="E-mail"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          className="w-full bg-card border border-page rounded-lg px-4 py-3 text-page focus:ring-2 focus:ring-orange-500"
+        />
 
-          {/* Поле пароль */}
-          <div>
-            <label className={`block text-sm font-medium mb-2 ${dark ? 'text-gray-200' : 'text-gray-700'}`}>
-              Пароль
-            </label>
-            <div className="relative">
-              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-              <input
-                required
-                type="password"
-                className={`input-field pl-10 ${dark ? 'bg-gray-700 border-gray-600 text-white' : ''}`}
-                placeholder="Введите пароль"
-              />
-            </div>
-          </div>
+        <input
+          type="password"
+          required
+          placeholder="Пароль"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          className="w-full bg-card border border-page rounded-lg px-4 py-3 text-page focus:ring-2 focus:ring-orange-500"
+        />
 
-          {/* Кнопка входа */}
-          <button
-            type="submit"
-            disabled={loading}
-            className={`btn-primary w-full ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
-          >
-            {loading ? 'Загрузка...' : 'Войти'}
-          </button>
+<button
+  type="submit"
+  className="
+    w-full
+    bg-gradient-to-r
+    from-orange-500
+    to-yellow-500
+    text-white
+    font-semibold
+    rounded-lg
+    shadow-md
+    hover:from-orange-600
+    hover:to-yellow-600
+    transition-all
+    duration-300
+    focus:outline-none
+    focus:ring-4
+    focus:ring-orange-300
+    active:scale-95
+    animate-pulse
+  "
+>
+  Войти
+</button>
 
-          {/* Подсказка */}
-          <p className={`text-xs text-center ${dark ? 'text-gray-400' : 'text-gray-500'}`}>
-            Демо-режим: любые учетные данные работают
-            <br />
-            <span className="font-semibold">Админ: admin / admin</span>
-          </p>
-        </form>
-
-        {/* Переключатель темы */}
-        <div className="flex justify-center mt-6">
-          <button
-            onClick={() => setDark(!dark)}
-            className={`p-2 rounded-full transition-colors ${
-              dark ? 'bg-gray-700 text-yellow-400' : 'bg-orange-100 text-orange-600'
-            }`}
-          >
-            {dark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-          </button>
-        </div>
-      </div>
+        <p className="text-xs text-center text-page/60">Демо-режим: любые данные работают</p>
+      </form>
     </div>
   );
 }
