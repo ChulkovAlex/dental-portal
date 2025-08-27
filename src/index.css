@@ -19,3 +19,11 @@
     --accent: #fb923c;
   }
 }
+
+@layer utilities {
+  .bg-page     { background-color: var(--bg); }
+  .bg-card     { background-color: var(--bg-soft); }
+  .text-page   { color: var(--text); }
+  .border-page { border-color: var(--border); }
+  .accent      { color: var(--accent); }
+}
