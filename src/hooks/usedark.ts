@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 
 export const useDark = () => {
-  const [dark, setDark] = useState(
+  const [dark, setDark] = useState<boolean>(
     () => localStorage.getItem('theme') === 'dark'
   );
 

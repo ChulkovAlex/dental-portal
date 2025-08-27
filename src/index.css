@@ -1,8 +1,7 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
 @layer base {
   :root {
@@ -19,12 +18,4 @@
     --border: #374151;
     --accent: #fb923c;
   }
-}
-
-@layer utilities {
-  .bg-page     { background-color: var(--bg); }
-  .bg-card     { background-color: var(--bg-soft); }
-  .text-page   { color: var(--text); }
-  .border-page { border-color: var(--border); }
-  .accent      { color: var(--accent); }
 }
