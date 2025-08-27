@@ -2,28 +2,3 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-@layer base {
-  :root {
-    --bg: #ffffff;
-    --bg-soft: #fff7ed;
-    --text: #111827;
-    --border: #fed7aa;
-    --accent: #ff6b00;
-  }
-  [data-theme='dark'] {
-    --bg: #111827;
-    --bg-soft: #1f2937;
-    --text: #f9fafb;
-    --border: #374151;
-    --accent: #fb923c;
-  }
-}
-
-@layer utilities {
-  .bg-page     { background-color: var(--bg); }
-  .bg-card     { background-color: var(--bg-soft); }
-  .text-page   { color: var(--text); }
-  .border-page { border-color: var(--border); }
-  .accent      { color: var(--accent); }
-}
