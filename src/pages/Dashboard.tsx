@@ -1,8 +1,7 @@
 import React from 'react';
 import { CalendarDays, Users, BarChart2, Settings, Moon, Sun } from 'lucide-react';
 import { useDark } from '../hooks/useDark';
-import ScheduleTable from '../components/ScheduleTable';
-import CalendarView from '../components/CalendarView';
+import DynamicCalendar from '../components/DynamicCalendar';
 
 export default function Dashboard() {
   const [dark, toggleDark] = useDark();
@@ -55,9 +54,8 @@ export default function Dashboard() {
           ))}
         </div>
 
-        {/* Расписание на любой период */}
-        <ScheduleTable />
-        <CalendarView />
+        {/* Календарь */}
+        <DynamicCalendar />
       </main>
     </div>
   );
