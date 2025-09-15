@@ -1,62 +1,102 @@
 import React from 'react';
-import { CalendarDays, Users, BarChart2, Settings, Moon, Sun } from 'lucide-react';
-import { useDark } from '../hooks/useDark';
+import { CalendarDays, CheckCircle2, Moon, PhoneCall, Sun, Users } from 'lucide-react';
+
+import DoctorConfirmationPanel from '../components/DoctorConfirmationPanel';
 import ScheduleTable from '../components/ScheduleTable';
+import VoiceAssistantPanel from '../components/VoiceAssistantPanel';
 import CalendarView from '../components/CalendarView';
+import { ScheduleProvider, useSchedule } from '../context/ScheduleContext';
+import { useDark } from '../hooks/useDark';
+import { formatDateKey } from '../utils/date';
 
 export default function Dashboard() {
+  return (
+    <ScheduleProvider>
+      <DashboardContent />
+    </ScheduleProvider>
+  );
+}
+
+function DashboardContent() {
   const [dark, toggleDark] = useDark();
+  const { appointments, callTasks, doctors } = useSchedule();
+
+  const todayKey = formatDateKey(new Date());
+  const todaysAppointments = appointments.filter((appointment) => appointment.date === todayKey);
+  const confirmedToday = todaysAppointments.filter((appointment) =>
+    ['confirmed', 'checked-in', 'completed'].includes(appointment.status),
+  ).length;
+  const activeCalls = callTasks.filter((task) => task.status === 'pending' || task.status === 'calling').length;
 
   const cards = [
-    { title: 'Расписание', value: '12 слотов', icon: <CalendarDays />, color: 'from-orange-400 to-yellow-400' },
-    { title: 'Врачи',       value: '8 онлайн',  icon: <Users />,       color: 'from-amber-400 to-orange-400' },
-    { title: 'Аналитика',   value: '↑ 14 %',    icon: <BarChart2 />,   color: 'from-green-400 to-emerald-400' },
-    { title: 'Настройки',   value: '3 увед.',   icon: <Settings />,    color: 'from-purple-400 to-pink-400' },
+    {
+      title: 'Приёмы сегодня',
+      value: todaysAppointments.length ? `${todaysAppointments.length}` : 'Нет записей',
+      icon: <CalendarDays />,
+      color: 'from-orange-400 to-amber-400',
+    },
+    {
+      title: 'Врачи в графике',
+      value: `${doctors.length} специалистов`,
+      icon: <Users />,
+      color: 'from-sky-400 to-indigo-400',
+    },
+    {
+      title: 'Подтверждены',
+      value: `${confirmedToday}/${todaysAppointments.length || 0}`,
+      icon: <CheckCircle2 />,
+      color: 'from-emerald-400 to-green-500',
+    },
+    {
+      title: 'Звонки ассистента',
+      value: activeCalls ? `${activeCalls} в работе` : 'Все выполнены',
+      icon: <PhoneCall />,
+      color: 'from-purple-400 to-pink-500',
+    },
   ];
 
   return (
     <div className="min-h-screen bg-page text-page">
-      {/* Шапка */}
-      <header className="bg-card/80 backdrop-blur-lg shadow-sm border-b border-page sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <h1 className="text-xl font-bold">Клиника доктора Денисенко</h1>
-            <button
-              onClick={toggleDark}
-              className="p-2 rounded-full bg-card border border-page"
-              title="Переключить тему"
-            >
-              {dark ? <Moon className="accent w-5 h-5" /> : <Sun className="accent w-5 h-5" />}
-            </button>
-          </div>
+      <header className="sticky top-0 z-10 border-b border-page bg-card/80 backdrop-blur-lg shadow-sm">
+        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
+          <h1 className="text-xl font-bold">Клиника доктора Денисенко</h1>
+          <button
+            onClick={toggleDark}
+            className="rounded-full border border-page bg-card p-2"
+            title="Переключить тему"
+          >
+            {dark ? <Moon className="accent h-5 w-5" /> : <Sun className="accent h-5 w-5" />}
+          </button>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 py-10 space-y-8">
-        {/* Приветственный баннер */}
-        <div className="bg-gradient-to-r from-orange-400 to-yellow-400 rounded-2xl p-8 text-white shadow-xl">
+      <main className="mx-auto max-w-7xl space-y-8 px-4 py-10">
+        <div className="rounded-2xl bg-gradient-to-r from-orange-400 to-yellow-400 p-8 text-white shadow-xl">
           <h2 className="text-3xl font-bold">Добро пожаловать, Администратор!</h2>
-          <p className="text-sm mt-1">Управляйте расписанием, врачами и аналитикой в одном месте.</p>
+          <p className="mt-2 max-w-2xl text-sm text-white/80">
+            Единый центр управления расписанием, подтверждениями докторов и работой голосового ассистента.
+            Следите за статусами приёмов и мгновенно обновляйте информацию для команды.
+          </p>
         </div>
 
-        {/* Карточки */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-          {cards.map((c, i) => (
+        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
+          {cards.map((card) => (
             <div
-              key={i}
-              className={`bg-card border border-page rounded-xl p-6 shadow-lg hover:shadow-2xl transition-all transform hover:-translate-y-1`}
+              key={card.title}
+              className="rounded-2xl border border-page bg-card p-6 shadow-lg transition-all hover:-translate-y-1 hover:shadow-2xl"
             >
-              <div className={`inline-block p-3 rounded-full bg-gradient-to-r ${c.color} text-white mb-4`}>
-                {React.cloneElement(c.icon, { className: 'w-6 h-6' })}
+              <div className={`mb-4 inline-flex rounded-full bg-gradient-to-r ${card.color} p-3 text-white`}>
+                {React.cloneElement(card.icon, { className: 'h-6 w-6' })}
               </div>
-              <p className="text-sm text-page/70">{c.title}</p>
-              <p className="text-2xl font-bold text-page">{c.value}</p>
+              <p className="text-sm text-page/70">{card.title}</p>
+              <p className="text-2xl font-bold text-page">{card.value}</p>
             </div>
           ))}
         </div>
 
-        {/* Расписание на любой период */}
         <ScheduleTable />
+        <DoctorConfirmationPanel />
+        <VoiceAssistantPanel />
         <CalendarView />
       </main>
     </div>
