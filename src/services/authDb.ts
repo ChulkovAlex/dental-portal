@@ -1,11 +1,17 @@
 import Dexie, { Table } from 'dexie';
 
+export type UserRole = 'admin' | 'doctor' | 'assistant' | 'reception';
+
+export type UserStatus = 'active' | 'invited' | 'disabled';
+
 export interface AuthUser {
   id?: number;
   email: string;
   passwordHash: string;
-  role: string;
+  role: UserRole;
   needsPasswordSetup: boolean;
+  displayName?: string;
+  status: UserStatus;
 }
 
 class AuthDatabase extends Dexie {
@@ -16,6 +22,20 @@ class AuthDatabase extends Dexie {
     this.version(1).stores({
       users: '++id, email',
     });
+    this.version(2)
+      .stores({
+      users: '++id, email',
+      })
+      .upgrade((transaction) =>
+        transaction
+          .table('users')
+          .toCollection()
+          .modify((user: Partial<AuthUser>) => {
+            if (!('status' in user)) {
+              user.status = user.needsPasswordSetup ? 'invited' : 'active';
+            }
+          }),
+      );
   }
 }
 
@@ -33,6 +53,8 @@ const initializeAuthDb = (async () => {
       passwordHash: '',
       role: 'admin',
       needsPasswordSetup: true,
+      displayName: 'Администратор',
+      status: 'invited',
     });
   }
 })();
