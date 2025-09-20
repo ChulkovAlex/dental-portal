@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, type Location } from 'react-router-dom';
 
 import { useAuth, AuthError } from '../context/AuthContext';
 import { AuthUser } from '../services/authDb';
@@ -20,7 +20,10 @@ export default function Login() {
   const [isSavingSetup, setIsSavingSetup] = useState(false);
 
   const navigate = useNavigate();
-  const { login, completeAdminSetup } = useAuth();
+  const location = useLocation();
+  const { login, completePasswordSetup } = useAuth();
+
+  const redirectLocation = (location.state as { from?: Location })?.from ?? null;
 
   React.useEffect(() => setVisible(true), []);
 
@@ -31,13 +34,18 @@ export default function Login() {
 
     try {
       await login(email.trim().toLowerCase(), password);
-      navigate('/dashboard');
+      const destination = redirectLocation
+        ? `${redirectLocation.pathname}${redirectLocation.search}${redirectLocation.hash}`
+        : '/dashboard';
+      navigate(destination, { replace: true });
     } catch (err) {
       if (err instanceof AuthError && err.code === 'needs-password-setup' && err.user) {
         setSetupUser(err.user);
         setSetupPassword('');
         setSetupPasswordConfirm('');
         setSetupError(null);
+      } else if (err instanceof AuthError && err.code === 'user-disabled') {
+        setError('Учётная запись заблокирована. Обратитесь к администратору.');
       } else if (err instanceof AuthError) {
         setError(err.message);
       } else {
@@ -69,11 +77,14 @@ export default function Login() {
     setIsSavingSetup(true);
 
     try {
-      await completeAdminSetup(setupUser.id, setupPassword);
+      await completePasswordSetup(setupUser.id, setupPassword);
       setSetupUser(null);
       setSetupPassword('');
       setSetupPasswordConfirm('');
-      navigate('/dashboard');
+      const destination = redirectLocation
+        ? `${redirectLocation.pathname}${redirectLocation.search}${redirectLocation.hash}`
+        : '/dashboard';
+      navigate(destination, { replace: true });
     } catch (err) {
       if (err instanceof AuthError) {
         setSetupError(err.message);

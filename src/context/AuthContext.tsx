@@ -1,9 +1,14 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import bcrypt from 'bcryptjs';
 
-import { AuthUser, authDb, authDbReady } from '../services/authDb';
+import { AuthUser, UserRole, authDb, authDbReady } from '../services/authDb';
 
-export type AuthErrorCode = 'user-not-found' | 'invalid-password' | 'needs-password-setup';
+export type AuthErrorCode =
+  | 'user-not-found'
+  | 'invalid-password'
+  | 'needs-password-setup'
+  | 'user-disabled'
+  | 'user-already-exists';
 
 export class AuthError extends Error {
   public code: AuthErrorCode;
@@ -17,13 +22,20 @@ export class AuthError extends Error {
   }
 }
 
+interface CreateInviteInput {
+  email: string;
+  role: UserRole;
+  name?: string;
+}
+
 interface AuthContextValue {
   currentUser: AuthUser | null;
   users: AuthUser[];
   loading: boolean;
   login: (email: string, password: string) => Promise<AuthUser>;
   logout: () => Promise<void>;
-  completeAdminSetup: (userId: number, password: string) => Promise<AuthUser>;
+  completePasswordSetup: (userId: number, password: string) => Promise<AuthUser>;
+  createUserInvite: (input: CreateInviteInput) => Promise<AuthUser>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -74,6 +86,10 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         throw new AuthError('user-not-found', 'Пользователь не найден');
       }
 
+      if (user.status === 'disabled') {
+        throw new AuthError('user-disabled', 'Доступ к учётной записи заблокирован');
+      }
+
       if (user.needsPasswordSetup) {
         throw new AuthError('needs-password-setup', 'Требуется первичная установка пароля', user);
       }
@@ -93,7 +109,7 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     [],
   );
 
-  const completeAdminSetup = useCallback(
+  const completePasswordSetup = useCallback(
     async (userId: number, password: string) => {
       await authDbReady;
       const existingUser = await authDb.users.get(userId);
@@ -105,6 +121,7 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       await authDb.users.update(userId, {
         passwordHash,
         needsPasswordSetup: false,
+        status: 'active',
       });
 
       const allUsers = await loadUsers();
@@ -121,6 +138,39 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     [loadUsers],
   );
 
+  const createUserInvite = useCallback(
+    async ({ email, role, name }: CreateInviteInput) => {
+      await authDbReady;
+      const normalizedEmail = email.trim().toLowerCase();
+      const existingUser = await authDb.users.where('email').equals(normalizedEmail).first();
+      if (existingUser) {
+        throw new AuthError(
+          'user-already-exists',
+          'Пользователь с таким e-mail уже существует',
+          existingUser,
+        );
+      }
+
+      const userId = await authDb.users.add({
+        email: normalizedEmail,
+        passwordHash: '',
+        role,
+        needsPasswordSetup: true,
+        displayName: name?.trim() ? name.trim() : undefined,
+        status: 'invited',
+      });
+
+      const allUsers = await loadUsers();
+      const createdUser = allUsers.find((user) => user.id === userId);
+      if (!createdUser) {
+        throw new AuthError('user-not-found', 'Пользователь не найден после создания');
+      }
+
+      return createdUser;
+    },
+    [loadUsers],
+  );
+
   const logout = useCallback(async () => {
     localStorage.removeItem(SESSION_STORAGE_KEY);
     setCurrentUser(null);
@@ -133,9 +183,10 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       loading,
       login,
       logout,
-      completeAdminSetup,
+      completePasswordSetup,
+      createUserInvite,
     }),
-    [completeAdminSetup, currentUser, loading, login, logout, users],
+    [completePasswordSetup, createUserInvite, currentUser, loading, login, logout, users],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
