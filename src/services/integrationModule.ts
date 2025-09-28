@@ -23,6 +23,10 @@ export interface TelegramIntegrationSettings {
 export type IdentAutoSyncInterval = 'manual' | 'hourly' | 'daily';
 
 export interface IdentIntegrationSettings {
+  host: string;
+  port: string;
+  username: string;
+  password: string;
   apiKey: string;
   workspace: string;
   clinicId: string;
@@ -55,6 +59,10 @@ const defaultState: IntegrationSettingsState = {
     lastSync: undefined,
   },
   ident: {
+    host: '',
+    port: '',
+    username: '',
+    password: '',
     apiKey: '',
     workspace: '',
     clinicId: '',
@@ -123,6 +131,12 @@ const loadState = (): IntegrationSettingsState => {
       ident: {
         ...defaultState.ident,
         ...(parsed.ident ?? {}),
+        host: typeof parsed.ident?.host === 'string' ? parsed.ident.host : defaultState.ident.host,
+        port: typeof parsed.ident?.port === 'string' ? parsed.ident.port : defaultState.ident.port,
+        username:
+          typeof parsed.ident?.username === 'string' ? parsed.ident.username : defaultState.ident.username,
+        password:
+          typeof parsed.ident?.password === 'string' ? parsed.ident.password : defaultState.ident.password,
         branchFilters: Array.isArray(parsed.ident?.branchFilters)
           ? parsed.ident!.branchFilters!.map((value) => String(value).trim()).filter(Boolean)
           : [...defaultState.ident.branchFilters],
@@ -376,6 +390,10 @@ export const fetchIdentSettings = async (): Promise<IdentIntegrationSettings> =>
 };
 
 export interface UpdateIdentSettingsPayload {
+  host?: string;
+  port?: string | number;
+  username?: string;
+  password?: string;
   apiKey?: string;
   workspace?: string;
   clinicId?: string;
@@ -396,6 +414,23 @@ export const updateIdentSettings = async (
 ): Promise<IdentIntegrationSettings> => {
   const next = updateState((state) => {
     const ident = { ...state.ident };
+
+    if (typeof updates.host === 'string') {
+      ident.host = updates.host.trim();
+    }
+
+    if (typeof updates.port === 'string' || typeof updates.port === 'number') {
+      const portValue = typeof updates.port === 'number' ? String(Math.trunc(updates.port)) : updates.port;
+      ident.port = portValue.trim();
+    }
+
+    if (typeof updates.username === 'string') {
+      ident.username = updates.username.trim();
+    }
+
+    if (typeof updates.password === 'string') {
+      ident.password = updates.password;
+    }
 
     if (typeof updates.apiKey === 'string') {
       ident.apiKey = updates.apiKey.trim();
