@@ -19,6 +19,7 @@ import {
   fetchPortalUsers,
   fetchTelegramSettings,
   fetchUserProfile,
+  type IdentAutoSyncInterval,
   type IdentIntegrationSettings,
   type IntegrationUserProfile,
   type PortalRole,
@@ -76,6 +77,62 @@ const ROLE_LABELS: Record<string, string> = {
   doctor: 'Врач-стоматолог',
   assistant: 'Ассистент врача',
 };
+
+type IdentEntityKey = 'syncDoctors' | 'syncBranches' | 'syncSchedule' | 'syncLeads' | 'syncCalls';
+
+const IDENT_ENTITY_OPTIONS: Array<{
+  key: IdentEntityKey;
+  label: string;
+  description: string;
+}> = [
+  {
+    key: 'syncDoctors',
+    label: 'Справочник врачей и ассистентов',
+    description: 'Импортирует карточки сотрудников и обновляет их расписание.',
+  },
+  {
+    key: 'syncBranches',
+    label: 'Филиалы клиники',
+    description: 'Подтягивает адреса и кабинеты, чтобы пациентам проще было ориентироваться.',
+  },
+  {
+    key: 'syncSchedule',
+    label: 'Расписание и занятость',
+    description: 'Слоты приёмов на выбранный период для отображения в портале.',
+  },
+  {
+    key: 'syncLeads',
+    label: 'Лиды и обращения',
+    description: 'Позволяет контролировать маркетинговые заявки из iDent.',
+  },
+  {
+    key: 'syncCalls',
+    label: 'Статистика звонков',
+    description: 'Аналитика звонков ресепшена для повышения конверсии.',
+  },
+];
+
+const IDENT_AUTO_SYNC_OPTIONS: Array<{
+  value: IdentAutoSyncInterval;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: 'manual',
+    label: 'Вручную',
+    description: 'Обновляйте данные по запросу администратора портала.',
+  },
+  {
+    value: 'hourly',
+    label: 'Каждый час',
+    description: 'Подходит для оперативного контроля расписания и обращений.',
+  },
+  {
+    value: 'daily',
+    label: 'Ежедневно',
+    description: 'Ночной обмен данными для стабильной работы портала.',
+  },
+];
 
 const createEmptyUserForm = (): UserFormState => ({
   name: '',
@@ -137,6 +194,7 @@ export default function Settings() {
   const [identForm, setIdentForm] = useState<IdentIntegrationSettings | null>(null);
   const [identBanner, setIdentBanner] = useState<BannerState>(null);
   const [isSavingIdent, setIsSavingIdent] = useState(false);
+  const [identBranchInput, setIdentBranchInput] = useState('');
 
   const refreshSelfProfile = useCallback(async () => {
     if (!currentUser?.id) {
@@ -293,6 +351,10 @@ export default function Settings() {
     setUserBanner(null);
   }, [isAdmin, selectedUserId]);
 
+  useEffect(() => {
+    setIdentBranchInput('');
+  }, [identForm?.branchFilters]);
+
   const userMeta = useMemo(() => {
     if (!isAdmin) {
       return selfProfile?.email ?? '';
@@ -306,13 +368,98 @@ export default function Settings() {
     [telegramSettings?.connected],
   );
 
-  const identMeta = useMemo(
-    () => (identSettings?.connected ? 'подключено' : 'неактивно'),
-    [identSettings?.connected],
-  );
+  const identMeta = useMemo(() => {
+    if (!identSettings) {
+      return 'неактивно';
+    }
+
+    if (identSettings.connected) {
+      return 'подключено';
+    }
+
+    const hasBasicConfig = Boolean(
+      identSettings.apiKey && identSettings.workspace && identSettings.clinicId && identSettings.branchFilters.length,
+    );
+
+    return hasBasicConfig ? 'готово к запуску' : 'неактивно';
+  }, [identSettings]);
+
+  const identAutoSyncLabel = useMemo(() => {
+    if (!identSettings) {
+      return '';
+    }
+
+    const option = IDENT_AUTO_SYNC_OPTIONS.find((item) => item.value === identSettings.autoSync);
+    return option?.label ?? '';
+  }, [identSettings]);
+
+  const identActiveEntities = useMemo(() => {
+    if (!identSettings) {
+      return [] as string[];
+    }
+
+    return IDENT_ENTITY_OPTIONS.filter((option) => identSettings[option.key]).map((option) => option.label);
+  }, [identSettings]);
 
   const handleUserFormChange = <K extends keyof UserFormState>(key: K, value: UserFormState[K]) => {
     setUserForm((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const handleIdentFormChange = <K extends keyof IdentIntegrationSettings>(
+    key: K,
+    value: IdentIntegrationSettings[K],
+  ) => {
+    setIdentForm((prev) => (prev ? { ...prev, [key]: value } : prev));
+  };
+
+  const handleIdentBranchAdd = () => {
+    setIdentForm((prev) => {
+      if (!prev) {
+        return prev;
+      }
+
+      const nextValue = identBranchInput.trim();
+      if (!nextValue) {
+        return prev;
+      }
+
+      if (prev.branchFilters.includes(nextValue)) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        branchFilters: [...prev.branchFilters, nextValue],
+      };
+    });
+    setIdentBranchInput('');
+  };
+
+  const handleIdentBranchRemove = (value: string) => {
+    setIdentForm((prev) => (prev ? { ...prev, branchFilters: prev.branchFilters.filter((item) => item !== value) } : prev));
+  };
+
+  const handleIdentBranchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter' || event.key === ',') {
+      event.preventDefault();
+      handleIdentBranchAdd();
+    }
+
+    if (event.key === 'Backspace' && !identBranchInput) {
+      setIdentForm((prev) => {
+        if (!prev || !prev.branchFilters.length) {
+          return prev;
+        }
+
+        const next = [...prev.branchFilters];
+        next.pop();
+        return { ...prev, branchFilters: next };
+      });
+    }
+  };
+
+  const handleIdentEntityToggle = (key: IdentEntityKey, value: boolean) => {
+    setIdentForm((prev) => (prev ? { ...prev, [key]: value } : prev));
   };
 
   const handleUserSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -444,6 +591,15 @@ export default function Settings() {
       const updated = await updateIdentSettings({
         apiKey: identForm.apiKey,
         workspace: identForm.workspace,
+        clinicId: identForm.clinicId,
+        branchFilters: identForm.branchFilters,
+        autoSync: identForm.autoSync,
+        scheduleWindow: identForm.scheduleWindow,
+        syncDoctors: identForm.syncDoctors,
+        syncBranches: identForm.syncBranches,
+        syncSchedule: identForm.syncSchedule,
+        syncLeads: identForm.syncLeads,
+        syncCalls: identForm.syncCalls,
         connected: true,
         syncNow: true,
       });
@@ -793,7 +949,7 @@ export default function Settings() {
         <div>
           <h2 className="text-xl font-semibold">Подключение к Ident</h2>
           <p className="text-sm text-page/60">
-            Настройте интеграцию с системой идентификации для автоматической проверки прав доступа.
+            Подключите API iDent, чтобы оперативно получать расписание, обращения и статистику прямо в портале.
           </p>
         </div>
       </div>
@@ -801,33 +957,190 @@ export default function Settings() {
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr),320px]">
         <form
           onSubmit={handleIdentSubmit}
-          className="space-y-4 rounded-2xl border border-page bg-card p-6 shadow-sm"
+          className="space-y-6 rounded-2xl border border-page bg-card p-6 shadow-sm"
         >
-          <label className="space-y-1 text-sm">
-            <span className="font-medium text-page/70">API ключ</span>
-            <input
-              required
-              value={identForm?.apiKey ?? ''}
-              onChange={(event) =>
-                setIdentForm((prev) => (prev ? { ...prev, apiKey: event.target.value } : prev))
-              }
-              placeholder="ident_xxxxxxxxx"
-              className="w-full rounded-lg border border-page/50 bg-white px-4 py-3 text-sm shadow-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
-            />
-          </label>
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="space-y-1 text-sm">
+              <span className="font-medium text-page/70">API ключ</span>
+              <input
+                required
+                value={identForm?.apiKey ?? ''}
+                onChange={(event) => handleIdentFormChange('apiKey', event.target.value)}
+                placeholder="ident_xxxxxxxxx"
+                className="w-full rounded-lg border border-page/50 bg-white px-4 py-3 text-sm shadow-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+              />
+            </label>
 
-          <label className="space-y-1 text-sm">
-            <span className="font-medium text-page/70">Рабочее пространство</span>
-            <input
-              required
-              value={identForm?.workspace ?? ''}
-              onChange={(event) =>
-                setIdentForm((prev) => (prev ? { ...prev, workspace: event.target.value } : prev))
-              }
-              placeholder="clinic-main"
-              className="w-full rounded-lg border border-page/50 bg-white px-4 py-3 text-sm shadow-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
-            />
-          </label>
+            <label className="space-y-1 text-sm">
+              <span className="font-medium text-page/70">Рабочее пространство</span>
+              <input
+                required
+                value={identForm?.workspace ?? ''}
+                onChange={(event) => handleIdentFormChange('workspace', event.target.value)}
+                placeholder="clinic-main"
+                className="w-full rounded-lg border border-page/50 bg-white px-4 py-3 text-sm shadow-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+              />
+            </label>
+
+            <label className="space-y-1 text-sm md:col-span-2">
+              <span className="font-medium text-page/70">ID клиники в iDent</span>
+              <input
+                required
+                value={identForm?.clinicId ?? ''}
+                onChange={(event) => handleIdentFormChange('clinicId', event.target.value)}
+                placeholder="Например, clinic-42"
+                className="w-full rounded-lg border border-page/50 bg-white px-4 py-3 text-sm shadow-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+              />
+            </label>
+          </div>
+
+          <div className="space-y-2 text-sm">
+            <div className="flex items-center justify-between gap-4">
+              <span className="font-medium text-page/70">Филиалы для синхронизации</span>
+              <span className="text-xs text-page/50">Введите код филиала и нажмите Enter</span>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <div className="flex min-w-[220px] flex-1 flex-wrap items-center gap-2 rounded-lg border border-page/40 bg-white px-3 py-2 text-sm shadow-sm">
+                {identForm?.branchFilters?.length ? (
+                  identForm.branchFilters.map((branch) => (
+                    <span
+                      key={branch}
+                      className="flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-1 text-xs font-medium text-emerald-700"
+                    >
+                      {branch}
+                      <button
+                        type="button"
+                        onClick={() => handleIdentBranchRemove(branch)}
+                        className="rounded-full bg-emerald-200 px-1 text-[10px] font-semibold text-emerald-700 transition hover:bg-emerald-300"
+                        aria-label={`Убрать филиал ${branch}`}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))
+                ) : (
+                  <span className="text-xs text-page/50">По умолчанию будут загружены все филиалы</span>
+                )}
+                <input
+                  value={identBranchInput}
+                  onChange={(event) => setIdentBranchInput(event.target.value)}
+                  onKeyDown={handleIdentBranchKeyDown}
+                  placeholder="Например, main-office"
+                  className="flex-1 min-w-[140px] border-none bg-transparent text-sm focus:outline-none"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={handleIdentBranchAdd}
+                className="rounded-lg border border-emerald-300 px-4 py-2 text-xs font-semibold text-emerald-600 transition hover:border-emerald-400 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={!identBranchInput.trim()}
+              >
+                Добавить филиал
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            <div>
+              <h3 className="text-sm font-semibold text-page/70">Какие данные получать из iDent</h3>
+              <div className="mt-3 grid gap-3">
+                {IDENT_ENTITY_OPTIONS.map((option) => {
+                  const isChecked = Boolean(identForm?.[option.key]);
+                  return (
+                    <label
+                      key={option.key}
+                      className={`flex items-start gap-3 rounded-xl border px-4 py-3 text-sm transition ${
+                        isChecked
+                          ? 'border-emerald-300 bg-emerald-50/60 text-emerald-800 shadow-sm'
+                          : 'border-page/40 bg-white hover:border-emerald-200 hover:bg-emerald-50/40'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={(event) => handleIdentEntityToggle(option.key, event.target.checked)}
+                        className="mt-1 h-4 w-4 rounded border-page/40 text-emerald-500 focus:ring-emerald-400"
+                      />
+                      <span>
+                        <span className="block font-medium">{option.label}</span>
+                        <span className="mt-1 block text-xs text-page/60">{option.description}</span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-[minmax(0,1fr),180px] md:items-center">
+              <label className="space-y-2 text-sm">
+                <span className="font-medium text-page/70">Глубина расписания (дней)</span>
+                <input
+                  type="range"
+                  min={1}
+                  max={30}
+                  value={identForm?.scheduleWindow ?? 7}
+                  onChange={(event) => handleIdentFormChange('scheduleWindow', Number(event.target.value))}
+                  className="w-full accent-emerald-500"
+                />
+                <div className="flex justify-between text-xs text-page/50">
+                  <span>1 день</span>
+                  <span>{identForm?.scheduleWindow ?? 7} дн.</span>
+                  <span>30 дней</span>
+                </div>
+              </label>
+
+              <div className="space-y-1 text-sm">
+                <span className="font-medium text-page/70">Точное значение</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={30}
+                  value={identForm?.scheduleWindow ?? 7}
+                  onChange={(event) => {
+                    const rawValue = Number(event.target.value);
+                    const normalized = Number.isFinite(rawValue)
+                      ? Math.min(30, Math.max(1, rawValue))
+                      : 1;
+                    handleIdentFormChange('scheduleWindow', normalized);
+                  }}
+                  className="w-full rounded-lg border border-page/40 bg-white px-3 py-2 text-sm shadow-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                />
+                <span className="block text-xs text-page/50">Можно указать от 1 до 30 дней вперёд</span>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-sm font-semibold text-page/70">Периодичность обновления данных</h3>
+              <div className="mt-3 grid gap-3 md:grid-cols-3">
+                {IDENT_AUTO_SYNC_OPTIONS.map((option) => {
+                  const isActive = identForm?.autoSync === option.value;
+                  return (
+                    <label
+                      key={option.value}
+                      className={`flex h-full cursor-pointer flex-col gap-1 rounded-xl border px-4 py-3 text-sm transition ${
+                        isActive
+                          ? 'border-emerald-300 bg-emerald-50 text-emerald-700 shadow-sm'
+                          : 'border-page/40 bg-white hover:border-emerald-200 hover:bg-emerald-50/50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="radio"
+                          name="ident-auto-sync"
+                          value={option.value}
+                          checked={isActive}
+                          onChange={() => handleIdentFormChange('autoSync', option.value)}
+                          className="h-4 w-4 text-emerald-500 focus:ring-emerald-400"
+                        />
+                        <span className="font-medium">{option.label}</span>
+                      </div>
+                      <span className="text-xs text-page/60">{option.description}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
 
           {renderBanner(identBanner)}
 
@@ -865,10 +1178,39 @@ export default function Settings() {
               </span>
             </p>
             <p>Workspace: {identSettings?.workspace || 'не указан'}</p>
+            <p>ID клиники: {identSettings?.clinicId || 'не указан'}</p>
+            <p>
+              Филиалы:{' '}
+              {identSettings?.branchFilters?.length
+                ? identSettings.branchFilters.join(', ')
+                : 'все филиалы'}
+            </p>
+            <p>
+              Периодичность: {identAutoSyncLabel || 'не выбрана'}
+            </p>
+            <p>Глубина расписания: {identSettings?.scheduleWindow ?? 0} дн.</p>
             <p>Последняя синхронизация: {formatDateTime(identSettings?.lastSync)}</p>
           </div>
+          <div>
+            <h4 className="text-xs font-semibold uppercase tracking-wide text-page/50">Загружаемые данные</h4>
+            <ul className="mt-2 space-y-1 text-xs text-page/70">
+              {identActiveEntities.length ? (
+                identActiveEntities.map((label) => (
+                  <li key={label} className="flex items-center gap-2">
+                    <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                    <span>{label}</span>
+                  </li>
+                ))
+              ) : (
+                <li className="flex items-center gap-2 text-page/50">
+                  <span className="h-2 w-2 rounded-full bg-page/40" />
+                  <span>Данные пока не выбраны</span>
+                </li>
+              )}
+            </ul>
+          </div>
           <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-xs text-emerald-700">
-            После подключения сотрудники смогут проходить аутентификацию через единую систему Ident.
+            После подключения портал автоматически подтянет расписание, сотрудников и обращения из iDent.
           </div>
         </div>
       </div>
