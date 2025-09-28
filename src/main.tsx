@@ -10,6 +10,7 @@ import Dashboard from './pages/Dashboard';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Reject from './pages/Reject';
+import Settings from './pages/Settings';
 import './index.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
@@ -24,6 +25,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/approve" element={<Approve />} />
               <Route path="/reject" element={<Reject />} />
+              <Route path="/settings" element={<Settings />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

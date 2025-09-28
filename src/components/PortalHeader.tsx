@@ -1,5 +1,5 @@
 import React from 'react';
-import { LogOut, Moon, Sun, UsersRound, ClipboardCheck, Ban } from 'lucide-react';
+import { LogOut, Moon, Sun, UsersRound, ClipboardCheck, Ban, Settings2 } from 'lucide-react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 
 import { useDark } from '../hooks/useDark';
@@ -14,6 +14,7 @@ const navItems = [
   { to: '/dashboard', label: 'Дашборд', icon: UsersRound },
   { to: '/approve', label: 'Заявки', icon: ClipboardCheck },
   { to: '/reject', label: 'Отказы', icon: Ban },
+  { to: '/settings', label: 'Настройки', icon: Settings2 },
 ];
 
 const linkBaseClasses =
