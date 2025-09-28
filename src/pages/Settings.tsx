@@ -19,7 +19,9 @@ import {
   fetchPortalUsers,
   fetchTelegramSettings,
   fetchUserProfile,
+  type IdentDataScope,
   type IdentIntegrationSettings,
+  type IdentSyncFrequency,
   type IntegrationUserProfile,
   type PortalRole,
   type TelegramIntegrationSettings,
@@ -114,6 +116,84 @@ const formatUsersMeta = (count: number) => {
   return `${count} сотрудников`;
 };
 
+const IDENT_DATA_ITEMS: Array<{
+  key: keyof IdentDataScope;
+  label: string;
+  description: string;
+}> = [
+  {
+    key: 'patients',
+    label: 'Пациенты',
+    description: 'Основные карточки, контакты и статусы лечения',
+  },
+  {
+    key: 'appointments',
+    label: 'Расписание',
+    description: 'Приёмы, статусы подтверждения и кабинеты',
+  },
+  {
+    key: 'finances',
+    label: 'Финансы',
+    description: 'Счета, оплаты и страховые закрытия',
+  },
+  {
+    key: 'documents',
+    label: 'Документы',
+    description: 'Информированные согласия и медицинские формы',
+  },
+];
+
+const IDENT_SYNC_OPTIONS: Array<{
+  value: IdentSyncFrequency;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: 'manual',
+    label: 'Только вручную',
+    description: 'Запускайте синхронизацию по запросу из портала',
+  },
+  {
+    value: 'hourly',
+    label: 'Каждый час',
+    description: 'Актуально для расписания и бронирований',
+  },
+  {
+    value: 'daily',
+    label: 'Раз в день',
+    description: 'Обновление справочников и архивных данных ночью',
+  },
+];
+
+const formatIdentSyncFrequency = (frequency: IdentSyncFrequency, autoSync: boolean) => {
+  if (!autoSync || frequency === 'manual') {
+    return 'вручную';
+  }
+
+  if (frequency === 'hourly') {
+    return 'каждый час';
+  }
+
+  if (frequency === 'daily') {
+    return 'каждый день';
+  }
+
+  return 'по расписанию';
+};
+
+const formatIdentDataScope = (scope: IdentDataScope) => {
+  const enabled = IDENT_DATA_ITEMS.filter((item) => scope[item.key]).map((item) => item.label.toLowerCase());
+  if (!enabled.length) {
+    return 'модули не выбраны';
+  }
+
+  if (enabled.length === 1) {
+    return enabled[0];
+  }
+
+  return enabled.join(', ');
+};
+
 export default function Settings() {
   const { currentUser, refreshUsers } = useAuth();
 
@@ -206,8 +286,15 @@ export default function Settings() {
 
       setTelegramSettings(telegram);
       setTelegramForm(telegram);
-      setIdentSettings(ident);
-      setIdentForm(ident);
+
+      if (ident) {
+        const clonedIdent = { ...ident, dataScope: { ...ident.dataScope } };
+        setIdentSettings(clonedIdent);
+        setIdentForm(clonedIdent);
+      } else {
+        setIdentSettings(null);
+        setIdentForm(null);
+      }
     };
 
     void load();
@@ -441,14 +528,26 @@ export default function Settings() {
     setIdentBanner(null);
 
     try {
+      const selectedModules = identForm.dataScope
+        ? Object.values(identForm.dataScope).some((value) => value)
+        : false;
+
+      if (!selectedModules) {
+        throw new Error('Выберите хотя бы один модуль для загрузки из iDent.');
+      }
+
       const updated = await updateIdentSettings({
         apiKey: identForm.apiKey,
         workspace: identForm.workspace,
+        autoSync: identForm.autoSync,
+        syncFrequency: identForm.syncFrequency,
+        dataScope: identForm.dataScope,
         connected: true,
         syncNow: true,
       });
-      setIdentSettings(updated);
-      setIdentForm(updated);
+      const cloned = { ...updated, dataScope: { ...updated.dataScope } };
+      setIdentSettings(cloned);
+      setIdentForm(cloned);
       setIdentBanner({ type: 'success', text: 'Ident подключён и синхронизирован.' });
     } catch (error) {
       setIdentBanner({
@@ -469,8 +568,9 @@ export default function Settings() {
 
     try {
       const updated = await updateIdentSettings({ connected: false });
-      setIdentSettings(updated);
-      setIdentForm(updated);
+      const cloned = { ...updated, dataScope: { ...updated.dataScope } };
+      setIdentSettings(cloned);
+      setIdentForm(cloned);
       setIdentBanner({ type: 'success', text: 'Интеграция Ident отключена.' });
     } catch (error) {
       setIdentBanner({
@@ -483,6 +583,49 @@ export default function Settings() {
     } finally {
       setIsSavingIdent(false);
     }
+  };
+
+  const handleIdentSyncNow = async () => {
+    setIsSavingIdent(true);
+    setIdentBanner(null);
+
+    try {
+      const updated = await updateIdentSettings({ syncNow: true });
+      const cloned = { ...updated, dataScope: { ...updated.dataScope } };
+      setIdentSettings(cloned);
+      setIdentForm(cloned);
+      setIdentBanner({ type: 'success', text: 'Запрос на обновление данных отправлен.' });
+    } catch (error) {
+      setIdentBanner({
+        type: 'error',
+        text:
+          error instanceof Error
+            ? error.message
+            : 'Не удалось обновить данные из Ident. Попробуйте позже.',
+      });
+    } finally {
+      setIsSavingIdent(false);
+    }
+  };
+
+  const handleIdentScopeChange = (key: keyof IdentDataScope, value: boolean) => {
+    setIdentForm((prev) => (prev ? { ...prev, dataScope: { ...prev.dataScope, [key]: value } } : prev));
+  };
+
+  const handleIdentAutoSyncChange = (value: boolean) => {
+    setIdentForm((prev) =>
+      prev
+        ? {
+            ...prev,
+            autoSync: value,
+            syncFrequency: value ? (prev.syncFrequency === 'manual' ? 'hourly' : prev.syncFrequency) : 'manual',
+          }
+        : prev,
+    );
+  };
+
+  const handleIdentFrequencyChange = (frequency: IdentSyncFrequency) => {
+    setIdentForm((prev) => (prev ? { ...prev, syncFrequency: frequency, autoSync: frequency !== 'manual' } : prev));
   };
 
   const renderBanner = (banner: BannerState) => {
@@ -793,7 +936,7 @@ export default function Settings() {
         <div>
           <h2 className="text-xl font-semibold">Подключение к Ident</h2>
           <p className="text-sm text-page/60">
-            Настройте интеграцию с системой идентификации для автоматической проверки прав доступа.
+            Настройте импорт данных из iDent: пациенты, расписание, финансы и документы клиники.
           </p>
         </div>
       </div>
@@ -829,6 +972,77 @@ export default function Settings() {
             />
           </label>
 
+          <div className="grid gap-4 rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 text-sm text-page/80">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="font-semibold text-emerald-700">Автообновление данных</p>
+                <p className="text-xs text-page/60">
+                  Синхронизируйте пациентов, расписание и документы без участия администратора.
+                </p>
+              </div>
+              <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-medium text-page/70">
+                <input
+                  type="checkbox"
+                  checked={Boolean(identForm?.autoSync)}
+                  onChange={(event) => handleIdentAutoSyncChange(event.target.checked)}
+                  className="h-4 w-4 rounded border-emerald-400 text-emerald-500 focus:ring-emerald-500"
+                />
+                Автоматически
+              </label>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-page/50">Периодичность</p>
+              <div className="grid gap-2 sm:grid-cols-3">
+                {IDENT_SYNC_OPTIONS.map((option) => {
+                  const isActive = identForm?.syncFrequency === option.value;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => handleIdentFrequencyChange(option.value)}
+                      className={`rounded-lg border px-3 py-3 text-left text-xs transition ${
+                        isActive
+                          ? 'border-emerald-400 bg-white text-emerald-700 shadow-sm'
+                          : 'border-emerald-200/70 text-page/60 hover:border-emerald-300 hover:bg-white'
+                      }`}
+                    >
+                      <span className="block text-sm font-semibold">{option.label}</span>
+                      <span className="block text-[11px] text-page/50">{option.description}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-page/50">Что загружать из Ident</p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {IDENT_DATA_ITEMS.map((item) => (
+                <label
+                  key={item.key}
+                  className={`flex cursor-pointer items-start gap-3 rounded-xl border px-4 py-3 text-sm transition ${
+                    identForm?.dataScope[item.key]
+                      ? 'border-emerald-400 bg-emerald-50 text-emerald-700 shadow-sm'
+                      : 'border-page/40 text-page/70 hover:border-emerald-200 hover:bg-emerald-50/50'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={Boolean(identForm?.dataScope[item.key])}
+                    onChange={(event) => handleIdentScopeChange(item.key, event.target.checked)}
+                    className="mt-1 h-4 w-4 rounded border-emerald-400 text-emerald-500 focus:ring-emerald-500"
+                  />
+                  <span>
+                    <span className="block font-semibold">{item.label}</span>
+                    <span className="block text-xs text-page/50">{item.description}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+
           {renderBanner(identBanner)}
 
           <div className="flex flex-wrap gap-3">
@@ -839,6 +1053,15 @@ export default function Settings() {
             >
               {isSavingIdent ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
               Сохранить и подключить
+            </button>
+            <button
+              type="button"
+              onClick={handleIdentSyncNow}
+              className="flex items-center gap-2 rounded-lg border border-emerald-300 px-5 py-3 text-sm font-semibold text-emerald-600 transition hover:border-emerald-400 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={isSavingIdent}
+            >
+              <Loader2 className={`h-4 w-4 ${isSavingIdent ? 'animate-spin' : ''}`} />
+              Запустить синхронизацию
             </button>
             {identSettings?.connected ? (
               <button
@@ -865,10 +1088,16 @@ export default function Settings() {
               </span>
             </p>
             <p>Workspace: {identSettings?.workspace || 'не указан'}</p>
+            <p>Автообновление: {identSettings?.autoSync ? 'включено' : 'отключено'}</p>
+            <p>
+              Периодичность: {identSettings ? formatIdentSyncFrequency(identSettings.syncFrequency, identSettings.autoSync) : '—'}
+            </p>
+            <p>Загружаемые модули: {identSettings ? formatIdentDataScope(identSettings.dataScope) : '—'}</p>
             <p>Последняя синхронизация: {formatDateTime(identSettings?.lastSync)}</p>
           </div>
           <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-xs text-emerald-700">
-            После подключения сотрудники смогут проходить аутентификацию через единую систему Ident.
+            Проверьте, что в iDent активированы API-доступ и разрешения на выбранные модули. Для первой загрузки данных может
+            потребоваться до 15 минут.
           </div>
         </div>
       </div>

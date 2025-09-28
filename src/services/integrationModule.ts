@@ -20,10 +20,22 @@ export interface TelegramIntegrationSettings {
   lastSync?: string;
 }
 
+export type IdentSyncFrequency = 'manual' | 'hourly' | 'daily';
+
+export interface IdentDataScope {
+  patients: boolean;
+  appointments: boolean;
+  finances: boolean;
+  documents: boolean;
+}
+
 export interface IdentIntegrationSettings {
   apiKey: string;
   workspace: string;
   connected: boolean;
+  autoSync: boolean;
+  syncFrequency: IdentSyncFrequency;
+  dataScope: IdentDataScope;
   lastSync?: string;
 }
 
@@ -47,6 +59,14 @@ const defaultState: IntegrationSettingsState = {
     apiKey: '',
     workspace: '',
     connected: false,
+    autoSync: true,
+    syncFrequency: 'hourly',
+    dataScope: {
+      patients: true,
+      appointments: true,
+      finances: false,
+      documents: false,
+    },
     lastSync: undefined,
   },
 };
@@ -69,7 +89,10 @@ const getStorage = (): Storage | null => {
 const cloneState = (state: IntegrationSettingsState): IntegrationSettingsState => ({
   userExtensions: { ...state.userExtensions },
   telegram: { ...state.telegram },
-  ident: { ...state.ident },
+  ident: {
+    ...state.ident,
+    dataScope: { ...state.ident.dataScope },
+  },
 });
 
 const loadState = (): IntegrationSettingsState => {
@@ -89,6 +112,8 @@ const loadState = (): IntegrationSettingsState => {
       return cloneState(defaultState);
     }
 
+    const parsedIdent = parsed.ident ?? {};
+
     return {
       userExtensions: typeof parsed.userExtensions === 'object' && parsed.userExtensions
         ? parsed.userExtensions
@@ -99,7 +124,13 @@ const loadState = (): IntegrationSettingsState => {
       },
       ident: {
         ...defaultState.ident,
-        ...(parsed.ident ?? {}),
+        ...parsedIdent,
+        dataScope: {
+          ...defaultState.ident.dataScope,
+          ...(typeof parsedIdent === 'object' && parsedIdent && 'dataScope' in parsedIdent
+            ? (parsedIdent.dataScope as Partial<IdentDataScope>)
+            : {}),
+        },
       },
     } satisfies IntegrationSettingsState;
   } catch (error) {
@@ -346,13 +377,16 @@ export const updateTelegramSettings = async (
 
 export const fetchIdentSettings = async (): Promise<IdentIntegrationSettings> => {
   const state = readState();
-  return { ...state.ident };
+  return { ...state.ident, dataScope: { ...state.ident.dataScope } };
 };
 
 export interface UpdateIdentSettingsPayload {
   apiKey?: string;
   workspace?: string;
   connected?: boolean;
+  autoSync?: boolean;
+  syncFrequency?: IdentSyncFrequency;
+  dataScope?: Partial<IdentDataScope>;
   syncNow?: boolean;
 }
 
@@ -375,6 +409,31 @@ export const updateIdentSettings = async (
       ident.lastSync = updates.connected ? new Date().toISOString() : undefined;
     }
 
+    if (typeof updates.autoSync === 'boolean') {
+      ident.autoSync = updates.autoSync;
+      if (!ident.autoSync) {
+        ident.syncFrequency = 'manual';
+      }
+    }
+
+    if (typeof updates.syncFrequency === 'string') {
+      ident.syncFrequency = updates.syncFrequency;
+      if (updates.syncFrequency !== 'manual') {
+        ident.autoSync = true;
+      }
+    }
+
+    if (updates.dataScope) {
+      const nextScopeEntries = Object.entries(updates.dataScope).filter(
+        ([key, value]) => key in ident.dataScope && typeof value === 'boolean',
+      ) as Array<[keyof IdentDataScope, boolean]>;
+
+      ident.dataScope = nextScopeEntries.reduce<IdentDataScope>((acc, [key, value]) => {
+        acc[key] = value;
+        return acc;
+      }, { ...ident.dataScope });
+    }
+
     if (updates.syncNow) {
       ident.lastSync = new Date().toISOString();
       ident.connected = Boolean(ident.apiKey && ident.workspace);
@@ -384,5 +443,5 @@ export const updateIdentSettings = async (
     return state;
   });
 
-  return { ...next.ident };
+  return { ...next.ident, dataScope: { ...next.ident.dataScope } };
 };
