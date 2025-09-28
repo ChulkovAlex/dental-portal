@@ -20,9 +20,20 @@ export interface TelegramIntegrationSettings {
   lastSync?: string;
 }
 
+export type IdentAutoSyncInterval = 'manual' | 'hourly' | 'daily';
+
 export interface IdentIntegrationSettings {
   apiKey: string;
   workspace: string;
+  clinicId: string;
+  branchFilters: string[];
+  autoSync: IdentAutoSyncInterval;
+  scheduleWindow: number;
+  syncDoctors: boolean;
+  syncBranches: boolean;
+  syncSchedule: boolean;
+  syncLeads: boolean;
+  syncCalls: boolean;
   connected: boolean;
   lastSync?: string;
 }
@@ -46,6 +57,15 @@ const defaultState: IntegrationSettingsState = {
   ident: {
     apiKey: '',
     workspace: '',
+    clinicId: '',
+    branchFilters: [],
+    autoSync: 'manual',
+    scheduleWindow: 7,
+    syncDoctors: true,
+    syncBranches: true,
+    syncSchedule: true,
+    syncLeads: false,
+    syncCalls: false,
     connected: false,
     lastSync: undefined,
   },
@@ -69,7 +89,10 @@ const getStorage = (): Storage | null => {
 const cloneState = (state: IntegrationSettingsState): IntegrationSettingsState => ({
   userExtensions: { ...state.userExtensions },
   telegram: { ...state.telegram },
-  ident: { ...state.ident },
+  ident: {
+    ...state.ident,
+    branchFilters: Array.isArray(state.ident.branchFilters) ? [...state.ident.branchFilters] : [],
+  },
 });
 
 const loadState = (): IntegrationSettingsState => {
@@ -100,6 +123,9 @@ const loadState = (): IntegrationSettingsState => {
       ident: {
         ...defaultState.ident,
         ...(parsed.ident ?? {}),
+        branchFilters: Array.isArray(parsed.ident?.branchFilters)
+          ? parsed.ident!.branchFilters!.map((value) => String(value).trim()).filter(Boolean)
+          : [...defaultState.ident.branchFilters],
       },
     } satisfies IntegrationSettingsState;
   } catch (error) {
@@ -352,6 +378,15 @@ export const fetchIdentSettings = async (): Promise<IdentIntegrationSettings> =>
 export interface UpdateIdentSettingsPayload {
   apiKey?: string;
   workspace?: string;
+  clinicId?: string;
+  branchFilters?: string[];
+  autoSync?: IdentAutoSyncInterval;
+  scheduleWindow?: number;
+  syncDoctors?: boolean;
+  syncBranches?: boolean;
+  syncSchedule?: boolean;
+  syncLeads?: boolean;
+  syncCalls?: boolean;
   connected?: boolean;
   syncNow?: boolean;
 }
@@ -370,6 +405,48 @@ export const updateIdentSettings = async (
       ident.workspace = updates.workspace.trim();
     }
 
+    if (typeof updates.clinicId === 'string') {
+      ident.clinicId = updates.clinicId.trim();
+    }
+
+    if (Array.isArray(updates.branchFilters)) {
+      ident.branchFilters = updates.branchFilters
+        .map((value) => value.trim())
+        .filter((value, index, array) => Boolean(value) && array.indexOf(value) === index);
+    }
+
+    if (typeof updates.autoSync === 'string') {
+      const allowed: IdentAutoSyncInterval[] = ['manual', 'hourly', 'daily'];
+      if (allowed.includes(updates.autoSync as IdentAutoSyncInterval)) {
+        ident.autoSync = updates.autoSync as IdentAutoSyncInterval;
+      }
+    }
+
+    if (typeof updates.scheduleWindow === 'number' && Number.isFinite(updates.scheduleWindow)) {
+      const clamped = Math.round(Math.max(1, Math.min(30, updates.scheduleWindow)));
+      ident.scheduleWindow = clamped;
+    }
+
+    if (typeof updates.syncDoctors === 'boolean') {
+      ident.syncDoctors = updates.syncDoctors;
+    }
+
+    if (typeof updates.syncBranches === 'boolean') {
+      ident.syncBranches = updates.syncBranches;
+    }
+
+    if (typeof updates.syncSchedule === 'boolean') {
+      ident.syncSchedule = updates.syncSchedule;
+    }
+
+    if (typeof updates.syncLeads === 'boolean') {
+      ident.syncLeads = updates.syncLeads;
+    }
+
+    if (typeof updates.syncCalls === 'boolean') {
+      ident.syncCalls = updates.syncCalls;
+    }
+
     if (typeof updates.connected === 'boolean') {
       ident.connected = updates.connected;
       ident.lastSync = updates.connected ? new Date().toISOString() : undefined;
@@ -377,10 +454,19 @@ export const updateIdentSettings = async (
 
     if (updates.syncNow) {
       ident.lastSync = new Date().toISOString();
-      ident.connected = Boolean(ident.apiKey && ident.workspace);
+      ident.connected = Boolean(
+        ident.apiKey &&
+        ident.workspace &&
+        ident.clinicId &&
+        ident.branchFilters.length &&
+        (ident.syncDoctors || ident.syncBranches || ident.syncSchedule || ident.syncLeads || ident.syncCalls),
+      );
     }
 
-    state.ident = ident;
+    state.ident = {
+      ...ident,
+      branchFilters: [...ident.branchFilters],
+    };
     return state;
   });
 
