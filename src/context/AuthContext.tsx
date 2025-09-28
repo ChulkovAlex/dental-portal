@@ -37,6 +37,7 @@ interface AuthContextValue {
   logout: () => Promise<void>;
   completeAdminSetup: (userId: number, password: string) => Promise<AuthUser>;
   createUser: (payload: CreateUserPayload) => Promise<AuthUser>;
+  refreshUsers: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -139,6 +140,16 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     setCurrentUser(null);
   }, []);
 
+  const refreshUsers = useCallback(async () => {
+    const updatedUsers = await loadUsers();
+    if (currentUser?.id) {
+      const updatedCurrent = updatedUsers.find((user) => user.id === currentUser.id);
+      if (updatedCurrent) {
+        setCurrentUser(updatedCurrent);
+      }
+    }
+  }, [currentUser, loadUsers]);
+
   const createUser = useCallback(
     async ({ email, role, password, requirePasswordSetup, name }: CreateUserPayload) => {
       await authDbReady;
@@ -181,8 +192,9 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       logout,
       completeAdminSetup,
       createUser,
+      refreshUsers,
     }),
-    [completeAdminSetup, createUser, currentUser, loading, login, logout, users],
+    [completeAdminSetup, createUser, currentUser, loading, login, logout, refreshUsers, users],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

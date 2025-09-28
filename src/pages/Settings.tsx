@@ -1,9 +1,10 @@
-import React, { FormEvent, useEffect, useMemo, useState } from 'react';
+import React, { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Bot,
   CheckCircle2,
-  KeyRound,
   Link2,
+  Loader2,
+  Plus,
   ShieldCheck,
   Smartphone,
   UserCog,
@@ -12,470 +13,933 @@ import {
 
 import PortalHeader from '../components/PortalHeader';
 import { useAuth } from '../context/AuthContext';
+import {
+  createPortalUser,
+  fetchIdentSettings,
+  fetchPortalUsers,
+  fetchTelegramSettings,
+  fetchUserProfile,
+  type IdentIntegrationSettings,
+  type IntegrationUserProfile,
+  type PortalRole,
+  type TelegramIntegrationSettings,
+  updateIdentSettings,
+  updateTelegramSettings,
+  updateUserProfile,
+} from '../services/integrationModule';
 
-interface TeamMemberConnection {
-  id: number;
-  name: string;
-  role: string;
-  telegramHandle: string;
-  connected: boolean;
+type MenuSection = 'users' | 'telegram' | 'ident';
+
+interface MenuItem {
+  id: MenuSection;
+  label: string;
+  description: string;
+  icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
 }
 
+type SelectedUser = number | 'new' | null;
+
+interface UserFormState {
+  name: string;
+  email: string;
+  role: PortalRole | string;
+  phone: string;
+  telegramHandle: string;
+}
+
+type BannerState = { type: 'success' | 'error'; text: string } | null;
+
+const MENU_ITEMS: MenuItem[] = [
+  {
+    id: 'users',
+    label: 'Пользователи',
+    description: 'Управление профилями и правами',
+    icon: UsersRound,
+  },
+  {
+    id: 'telegram',
+    label: 'Телеграм',
+    description: 'Уведомления и синхронизация',
+    icon: Bot,
+  },
+  {
+    id: 'ident',
+    label: 'Ident',
+    description: 'Интеграция с системой идентификации',
+    icon: Link2,
+  },
+];
+
+const ROLE_LABELS: Record<string, string> = {
+  admin: 'Администратор портала',
+  reception: 'Администратор ресепшена',
+  doctor: 'Врач-стоматолог',
+  assistant: 'Ассистент врача',
+};
+
+const createEmptyUserForm = (): UserFormState => ({
+  name: '',
+  email: '',
+  role: 'reception',
+  phone: '',
+  telegramHandle: '',
+});
+
+const formatDateTime = (iso?: string) => {
+  if (!iso) {
+    return 'не выполнялась';
+  }
+
+  try {
+    return new Date(iso).toLocaleString('ru-RU');
+  } catch (error) {
+    console.error('Не удалось преобразовать дату синхронизации', error);
+    return 'неизвестно';
+  }
+};
+
+const formatUsersMeta = (count: number) => {
+  if (!count) {
+    return 'нет сотрудников';
+  }
+
+  if (count === 1) {
+    return '1 сотрудник';
+  }
+
+  if (count < 5) {
+    return `${count} сотрудника`;
+  }
+
+  return `${count} сотрудников`;
+};
+
 export default function Settings() {
-  const { currentUser } = useAuth();
+  const { currentUser, refreshUsers } = useAuth();
 
-  const [profile, setProfile] = useState({
-    name: currentUser?.name ?? '',
-    email: currentUser?.email ?? '',
-    role: currentUser?.role ?? '',
-    phone: '+7',
-  });
-  const [notifications, setNotifications] = useState({
-    scheduleUpdates: true,
-    approvals: true,
-    marketing: false,
-    dailyDigest: true,
-  });
-  const [telegramBot, setTelegramBot] = useState({
-    token: '',
-    channel: '',
-    connected: false,
-    lastSync: '',
-  });
-  const [identIntegration, setIdentIntegration] = useState({
-    apiKey: '',
-    workspace: '',
-    connected: false,
-    lastSync: '',
-  });
-  const [teamConnections, setTeamConnections] = useState<TeamMemberConnection[]>([
-    {
-      id: 1,
-      name: 'Дарья Белова',
-      role: 'Администратор ресепшена',
-      telegramHandle: '@daria.smile',
-      connected: true,
-    },
-    {
-      id: 2,
-      name: 'Иван Денисенко',
-      role: 'Врач-стоматолог',
-      telegramHandle: '@dr.denis',
-      connected: false,
-    },
-    {
-      id: 3,
-      name: 'Екатерина Летова',
-      role: 'Ассистент',
-      telegramHandle: '@kate_helper',
-      connected: false,
-    },
-  ]);
+  const isAdmin = currentUser?.role === 'admin';
 
-  const [profileMessage, setProfileMessage] = useState<string | null>(null);
-  const [telegramMessage, setTelegramMessage] = useState<string | null>(null);
-  const [identMessage, setIdentMessage] = useState<string | null>(null);
+  const [selectedSection, setSelectedSection] = useState<MenuSection>('users');
+  const [selfProfile, setSelfProfile] = useState<IntegrationUserProfile | null>(null);
+  const [users, setUsers] = useState<IntegrationUserProfile[]>([]);
+  const [selectedUserId, setSelectedUserId] = useState<SelectedUser>(null);
+  const [userForm, setUserForm] = useState<UserFormState>(createEmptyUserForm);
+  const [userBanner, setUserBanner] = useState<BannerState>(null);
+  const [isSavingUser, setIsSavingUser] = useState(false);
+  const [isLoadingUsers, setIsLoadingUsers] = useState(false);
+
+  const [telegramSettings, setTelegramSettings] = useState<TelegramIntegrationSettings | null>(null);
+  const [telegramForm, setTelegramForm] = useState<TelegramIntegrationSettings | null>(null);
+  const [telegramBanner, setTelegramBanner] = useState<BannerState>(null);
+  const [isSavingTelegram, setIsSavingTelegram] = useState(false);
+
+  const [identSettings, setIdentSettings] = useState<IdentIntegrationSettings | null>(null);
+  const [identForm, setIdentForm] = useState<IdentIntegrationSettings | null>(null);
+  const [identBanner, setIdentBanner] = useState<BannerState>(null);
+  const [isSavingIdent, setIsSavingIdent] = useState(false);
+
+  const refreshSelfProfile = useCallback(async () => {
+    if (!currentUser?.id) {
+      return;
+    }
+
+    const profile = await fetchUserProfile(currentUser.id);
+    if (profile) {
+      setSelfProfile(profile);
+      if (!isAdmin) {
+        setUserForm({
+          name: profile.name,
+          email: profile.email,
+          role: profile.role,
+          phone: profile.phone ?? '',
+          telegramHandle: profile.telegramHandle ?? '',
+        });
+      }
+    }
+  }, [currentUser?.id, isAdmin]);
+
+  const reloadUsers = useCallback(async () => {
+    if (!isAdmin) {
+      return [] as IntegrationUserProfile[];
+    }
+
+    setIsLoadingUsers(true);
+    try {
+      const list = await fetchPortalUsers();
+      setUsers(list);
+      return list;
+    } finally {
+      setIsLoadingUsers(false);
+    }
+  }, [isAdmin]);
 
   useEffect(() => {
-    setProfile((prev) => ({
-      ...prev,
-      name: currentUser?.name ?? '',
-      email: currentUser?.email ?? '',
-      role: currentUser?.role ?? '',
-    }));
-  }, [currentUser]);
+    if (!currentUser?.id) {
+      return;
+    }
 
-  const connectedCount = useMemo(
-    () => teamConnections.filter((member) => member.connected).length,
-    [teamConnections],
+    let isCancelled = false;
+
+    const load = async () => {
+      const [profile, telegram, ident] = await Promise.all([
+        fetchUserProfile(currentUser.id!),
+        fetchTelegramSettings(),
+        fetchIdentSettings(),
+      ]);
+
+      if (isCancelled) {
+        return;
+      }
+
+      if (profile) {
+        setSelfProfile(profile);
+        if (!isAdmin) {
+          setUserForm({
+            name: profile.name,
+            email: profile.email,
+            role: profile.role,
+            phone: profile.phone ?? '',
+            telegramHandle: profile.telegramHandle ?? '',
+          });
+        }
+      }
+
+      setTelegramSettings(telegram);
+      setTelegramForm(telegram);
+      setIdentSettings(ident);
+      setIdentForm(ident);
+    };
+
+    void load();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [currentUser?.id, isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin) {
+      setUsers([]);
+      setSelectedUserId(null);
+      return;
+    }
+
+    let isCancelled = false;
+
+    const loadUsers = async () => {
+      setIsLoadingUsers(true);
+      const list = await fetchPortalUsers();
+      if (!isCancelled) {
+        setUsers(list);
+      }
+      setIsLoadingUsers(false);
+    };
+
+    void loadUsers();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin) {
+      return;
+    }
+
+    if (selectedUserId === null) {
+      if (currentUser?.id) {
+        setSelectedUserId(currentUser.id);
+      } else if (users.length) {
+        setSelectedUserId(users[0].id);
+      }
+    } else if (selectedUserId !== 'new' && users.length) {
+      const exists = users.some((user) => user.id === selectedUserId);
+      if (!exists) {
+        setSelectedUserId(users[0]?.id ?? 'new');
+      }
+    }
+  }, [currentUser?.id, isAdmin, selectedUserId, users]);
+
+  useEffect(() => {
+    if (isAdmin) {
+      if (selectedUserId === 'new') {
+        setUserForm(createEmptyUserForm());
+        return;
+      }
+
+      const selectedUser = users.find((user) => user.id === selectedUserId);
+      if (selectedUser) {
+        setUserForm({
+          name: selectedUser.name,
+          email: selectedUser.email,
+          role: selectedUser.role,
+          phone: selectedUser.phone ?? '',
+          telegramHandle: selectedUser.telegramHandle ?? '',
+        });
+      }
+    } else if (selfProfile) {
+      setUserForm({
+        name: selfProfile.name,
+        email: selfProfile.email,
+        role: selfProfile.role,
+        phone: selfProfile.phone ?? '',
+        telegramHandle: selfProfile.telegramHandle ?? '',
+      });
+    }
+  }, [isAdmin, selectedUserId, selfProfile, users]);
+
+  useEffect(() => {
+    setUserBanner(null);
+  }, [isAdmin, selectedUserId]);
+
+  const userMeta = useMemo(() => {
+    if (!isAdmin) {
+      return selfProfile?.email ?? '';
+    }
+
+    return formatUsersMeta(users.length);
+  }, [isAdmin, selfProfile?.email, users.length]);
+
+  const telegramMeta = useMemo(
+    () => (telegramSettings?.connected ? 'подключено' : 'неактивно'),
+    [telegramSettings?.connected],
   );
 
-  const handleProfileSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setProfileMessage('Настройки профиля сохранены.');
-    setTimeout(() => setProfileMessage(null), 4000);
+  const identMeta = useMemo(
+    () => (identSettings?.connected ? 'подключено' : 'неактивно'),
+    [identSettings?.connected],
+  );
+
+  const handleUserFormChange = <K extends keyof UserFormState>(key: K, value: UserFormState[K]) => {
+    setUserForm((prev) => ({ ...prev, [key]: value }));
   };
 
-  const handleTelegramSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleUserSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setTelegramBot((prev) => ({
-      ...prev,
-      connected: true,
-      lastSync: new Date().toLocaleString('ru-RU'),
-    }));
-    setTelegramMessage('Телеграм-бот успешно подключён и синхронизирован.');
-    setTimeout(() => setTelegramMessage(null), 4000);
+    if (!currentUser?.id && selectedUserId !== 'new') {
+      return;
+    }
+
+    setIsSavingUser(true);
+    setUserBanner(null);
+
+    try {
+      if (isAdmin) {
+        if (selectedUserId === 'new') {
+          const created = await createPortalUser({
+            name: userForm.name,
+            email: userForm.email,
+            role: userForm.role,
+            phone: userForm.phone,
+            telegramHandle: userForm.telegramHandle,
+          });
+          setUserBanner({ type: 'success', text: 'Новый сотрудник добавлен в портал.' });
+          const list = await reloadUsers();
+          setSelectedUserId(created.id);
+          if (!list.some((user) => user.id === created.id)) {
+            setUsers((prev) => [...prev, created]);
+          }
+        } else if (typeof selectedUserId === 'number') {
+          await updateUserProfile(selectedUserId, {
+            name: userForm.name,
+            email: userForm.email,
+            role: userForm.role,
+            phone: userForm.phone,
+            telegramHandle: userForm.telegramHandle,
+          });
+          setUserBanner({ type: 'success', text: 'Профиль сотрудника обновлён.' });
+          await reloadUsers();
+        } else {
+          throw new Error('Выберите сотрудника для редактирования.');
+        }
+      } else if (selfProfile) {
+        const updated = await updateUserProfile(selfProfile.id, {
+          name: userForm.name,
+          phone: userForm.phone,
+          telegramHandle: userForm.telegramHandle,
+        });
+        setSelfProfile(updated);
+        setUserBanner({ type: 'success', text: 'Личный профиль обновлён.' });
+      }
+
+      await refreshUsers();
+      await refreshSelfProfile();
+    } catch (error) {
+      setUserBanner({
+        type: 'error',
+        text:
+          error instanceof Error
+            ? error.message
+            : 'Не удалось сохранить изменения. Попробуйте позже.',
+      });
+    } finally {
+      setIsSavingUser(false);
+    }
   };
 
-  const handleIdentSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleTelegramSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setIdentIntegration((prev) => ({
-      ...prev,
-      connected: true,
-      lastSync: new Date().toLocaleString('ru-RU'),
-    }));
-    setIdentMessage('Интеграция с Ident активирована.');
-    setTimeout(() => setIdentMessage(null), 4000);
+    if (!telegramForm) {
+      return;
+    }
+
+    setIsSavingTelegram(true);
+    setTelegramBanner(null);
+
+    try {
+      const updated = await updateTelegramSettings({
+        token: telegramForm.token,
+        channel: telegramForm.channel,
+        connected: true,
+        syncNow: true,
+      });
+      setTelegramSettings(updated);
+      setTelegramForm(updated);
+      setTelegramBanner({ type: 'success', text: 'Телеграм-бот синхронизирован.' });
+    } catch (error) {
+      setTelegramBanner({
+        type: 'error',
+        text:
+          error instanceof Error
+            ? error.message
+            : 'Не удалось обновить интеграцию с Телеграмом.',
+      });
+    } finally {
+      setIsSavingTelegram(false);
+    }
   };
 
-  const toggleTeamMemberConnection = (id: number) => {
-    setTeamConnections((prev) =>
-      prev.map((member) =>
-        member.id === id ? { ...member, connected: !member.connected } : member,
-      ),
+  const handleTelegramDisconnect = async () => {
+    setIsSavingTelegram(true);
+    setTelegramBanner(null);
+    try {
+      const updated = await updateTelegramSettings({ connected: false });
+      setTelegramSettings(updated);
+      setTelegramForm(updated);
+      setTelegramBanner({ type: 'success', text: 'Телеграм-бот отключён.' });
+    } catch (error) {
+      setTelegramBanner({
+        type: 'error',
+        text:
+          error instanceof Error
+            ? error.message
+            : 'Не удалось отключить Телеграм-бот.',
+      });
+    } finally {
+      setIsSavingTelegram(false);
+    }
+  };
+
+  const handleIdentSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!identForm) {
+      return;
+    }
+
+    setIsSavingIdent(true);
+    setIdentBanner(null);
+
+    try {
+      const updated = await updateIdentSettings({
+        apiKey: identForm.apiKey,
+        workspace: identForm.workspace,
+        connected: true,
+        syncNow: true,
+      });
+      setIdentSettings(updated);
+      setIdentForm(updated);
+      setIdentBanner({ type: 'success', text: 'Ident подключён и синхронизирован.' });
+    } catch (error) {
+      setIdentBanner({
+        type: 'error',
+        text:
+          error instanceof Error
+            ? error.message
+            : 'Не удалось подключить интеграцию Ident.',
+      });
+    } finally {
+      setIsSavingIdent(false);
+    }
+  };
+
+  const handleIdentDisconnect = async () => {
+    setIsSavingIdent(true);
+    setIdentBanner(null);
+
+    try {
+      const updated = await updateIdentSettings({ connected: false });
+      setIdentSettings(updated);
+      setIdentForm(updated);
+      setIdentBanner({ type: 'success', text: 'Интеграция Ident отключена.' });
+    } catch (error) {
+      setIdentBanner({
+        type: 'error',
+        text:
+          error instanceof Error
+            ? error.message
+            : 'Не удалось отключить интеграцию Ident.',
+      });
+    } finally {
+      setIsSavingIdent(false);
+    }
+  };
+
+  const renderBanner = (banner: BannerState) => {
+    if (!banner) {
+      return null;
+    }
+
+    const isSuccess = banner.type === 'success';
+    const icon = <CheckCircle2 className="h-4 w-4" />;
+    const baseClasses = isSuccess
+      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+      : 'border-red-200 bg-red-50 text-red-700';
+
+    return (
+      <p className={`flex items-center gap-2 rounded-lg border px-4 py-3 text-sm ${baseClasses}`}>
+        {icon}
+        {banner.text}
+      </p>
     );
+  };
+
+  const renderUsersSection = () => (
+    <section className="space-y-6">
+      <div className="flex items-start gap-3">
+        <div className="rounded-full bg-orange-100 p-3 text-orange-500">
+          <UsersRound className="h-5 w-5" />
+        </div>
+        <div>
+          <h2 className="text-xl font-semibold">
+            {isAdmin ? 'Управление сотрудниками' : 'Личный профиль'}
+          </h2>
+          <p className="text-sm text-page/60">
+            {isAdmin
+              ? 'Создавайте учётные записи, назначайте права доступа и обновляйте контактные данные команды.'
+              : 'Обновите контактную информацию, чтобы коллеги могли быстро связаться с вами.'}
+          </p>
+        </div>
+      </div>
+
+      <div className={`grid gap-6 ${isAdmin ? 'lg:grid-cols-[280px,1fr]' : ''}`}>
+        {isAdmin ? (
+          <div className="space-y-4">
+            <button
+              type="button"
+              onClick={() => setSelectedUserId('new')}
+              className={`flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-orange-300 bg-orange-50 px-4 py-3 text-sm font-semibold text-orange-600 transition hover:border-orange-400 hover:bg-orange-100 ${
+                selectedUserId === 'new' ? 'ring-2 ring-orange-200' : ''
+              }`}
+            >
+              <Plus className="h-4 w-4" /> Добавить сотрудника
+            </button>
+
+            <div className="space-y-2">
+              {isLoadingUsers ? (
+                <div className="flex items-center justify-center rounded-xl border border-dashed border-page/40 bg-card/60 px-4 py-6 text-sm text-page/60">
+                  Загрузка списка пользователей...
+                </div>
+              ) : users.length ? (
+                users.map((user) => {
+                  const isActive = selectedUserId === user.id;
+                  return (
+                    <button
+                      key={user.id}
+                      type="button"
+                      onClick={() => setSelectedUserId(user.id)}
+                      className={`w-full rounded-xl border px-4 py-3 text-left transition ${
+                        isActive
+                          ? 'border-orange-300 bg-orange-50 text-orange-700 shadow-sm'
+                          : 'border-page/40 bg-card hover:border-orange-200 hover:bg-orange-50/50'
+                      }`}
+                    >
+                      <p className="text-sm font-semibold">
+                        {user.name?.trim() || user.email}
+                      </p>
+                      <p className="text-xs text-page/60">
+                        {ROLE_LABELS[user.role] ?? user.role}
+                      </p>
+                    </button>
+                  );
+                })
+              ) : (
+                <p className="rounded-xl border border-dashed border-page/50 bg-card/60 px-4 py-6 text-center text-sm text-page/60">
+                  Пока нет добавленных сотрудников.
+                </p>
+              )}
+            </div>
+          </div>
+        ) : null}
+
+        <form
+          onSubmit={handleUserSubmit}
+          className="space-y-5 rounded-2xl border border-page bg-card p-6 shadow-sm"
+        >
+          <div className="flex items-center gap-3">
+            <div className="rounded-full bg-orange-100 p-2 text-orange-500">
+              <UserCog className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="text-lg font-semibold">
+                {isAdmin
+                  ? selectedUserId === 'new'
+                    ? 'Новый сотрудник'
+                    : 'Карточка сотрудника'
+                  : 'Контактные данные'}
+              </h3>
+              <p className="text-xs text-page/60">
+                {isAdmin
+                  ? 'Заполните обязательные поля и сохраните изменения, чтобы применить их в портале.'
+                  : 'Имя и контакты будут видеть коллеги с доступом к порталу.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="space-y-1 text-sm">
+              <span className="font-medium text-page/70">Имя и фамилия</span>
+              <input
+                required
+                value={userForm.name}
+                onChange={(event) => handleUserFormChange('name', event.target.value)}
+                placeholder="Например, Анна Петрова"
+                className="w-full rounded-lg border border-page/50 bg-white px-4 py-3 text-sm shadow-sm focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-200"
+              />
+            </label>
+
+            <label className="space-y-1 text-sm">
+              <span className="font-medium text-page/70">Рабочий e-mail</span>
+              <input
+                required
+                type="email"
+                value={userForm.email}
+                onChange={(event) => handleUserFormChange('email', event.target.value)}
+                placeholder="name@clinic.ru"
+                className={`w-full rounded-lg border px-4 py-3 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-orange-200 ${
+                  isAdmin ? 'border-page/50 focus:border-orange-400' : 'border-page/30 bg-page/10'
+                } ${isAdmin ? '' : 'cursor-not-allowed text-page/50'}`}
+                disabled={!isAdmin || selectedUserId !== 'new'}
+              />
+            </label>
+
+            {isAdmin ? (
+              <label className="space-y-1 text-sm">
+                <span className="font-medium text-page/70">Права доступа</span>
+                <select
+                  value={userForm.role}
+                  onChange={(event) => handleUserFormChange('role', event.target.value)}
+                  className="w-full rounded-lg border border-page/50 bg-white px-4 py-3 text-sm shadow-sm focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-200"
+                >
+                  {Object.entries(ROLE_LABELS).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              <label className="space-y-1 text-sm">
+                <span className="font-medium text-page/70">Ваша роль</span>
+                <input
+                  value={ROLE_LABELS[userForm.role] ?? userForm.role}
+                  readOnly
+                  className="w-full rounded-lg border border-page/20 bg-page/5 px-4 py-3 text-sm text-page/60"
+                />
+              </label>
+            )}
+
+            <label className="space-y-1 text-sm">
+              <span className="font-medium text-page/70">Контактный телефон</span>
+              <input
+                value={userForm.phone}
+                onChange={(event) => handleUserFormChange('phone', event.target.value)}
+                placeholder="+7 (999) 000-00-00"
+                className="w-full rounded-lg border border-page/50 bg-white px-4 py-3 text-sm shadow-sm focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-200"
+              />
+            </label>
+
+            <label className="space-y-1 text-sm">
+              <span className="font-medium text-page/70">Телеграм</span>
+              <input
+                value={userForm.telegramHandle}
+                onChange={(event) => handleUserFormChange('telegramHandle', event.target.value)}
+                placeholder="@username"
+                className="w-full rounded-lg border border-page/50 bg-white px-4 py-3 text-sm shadow-sm focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-200"
+              />
+            </label>
+          </div>
+
+          {renderBanner(userBanner)}
+
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="submit"
+              className="flex items-center gap-2 rounded-lg bg-gradient-to-r from-orange-500 to-yellow-500 px-5 py-3 text-sm font-semibold text-white shadow-lg transition hover:from-orange-600 hover:to-yellow-600 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={isSavingUser}
+            >
+              {isSavingUser ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+              {isAdmin
+                ? selectedUserId === 'new'
+                  ? 'Создать пользователя'
+                  : 'Сохранить изменения'
+                : 'Обновить профиль'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </section>
+  );
+
+  const renderTelegramSection = () => (
+    <section className="space-y-6">
+      <div className="flex items-start gap-3">
+        <div className="rounded-full bg-sky-100 p-3 text-sky-500">
+          <Bot className="h-5 w-5" />
+        </div>
+        <div>
+          <h2 className="text-xl font-semibold">Телеграм-бот для сотрудников</h2>
+          <p className="text-sm text-page/60">
+            Настройте бот для отправки уведомлений о расписании, подтверждениях и служебных сообщениях.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr),320px]">
+        <form
+          onSubmit={handleTelegramSubmit}
+          className="space-y-4 rounded-2xl border border-page bg-card p-6 shadow-sm"
+        >
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="space-y-1 text-sm">
+              <span className="font-medium text-page/70">Bot API Token</span>
+              <input
+                required
+                value={telegramForm?.token ?? ''}
+                onChange={(event) =>
+                  setTelegramForm((prev) => (prev ? { ...prev, token: event.target.value } : prev))
+                }
+                placeholder="Например, 123456:ABCDEF"
+                className="w-full rounded-lg border border-page/50 bg-white px-4 py-3 text-sm shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
+              />
+            </label>
+
+            <label className="space-y-1 text-sm">
+              <span className="font-medium text-page/70">Канал или чат</span>
+              <input
+                required
+                value={telegramForm?.channel ?? ''}
+                onChange={(event) =>
+                  setTelegramForm((prev) => (prev ? { ...prev, channel: event.target.value } : prev))
+                }
+                placeholder="@clinic_schedule"
+                className="w-full rounded-lg border border-page/50 bg-white px-4 py-3 text-sm shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
+              />
+            </label>
+          </div>
+
+          {renderBanner(telegramBanner)}
+
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="submit"
+              className="flex items-center gap-2 rounded-lg bg-gradient-to-r from-sky-500 to-blue-500 px-5 py-3 text-sm font-semibold text-white shadow-lg transition hover:from-sky-600 hover:to-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={isSavingTelegram}
+            >
+              {isSavingTelegram ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+              Сохранить и синхронизировать
+            </button>
+            {telegramSettings?.connected ? (
+              <button
+                type="button"
+                onClick={handleTelegramDisconnect}
+                className="rounded-lg border border-sky-300 px-5 py-3 text-sm font-semibold text-sky-600 transition hover:border-sky-400 hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isSavingTelegram}
+              >
+                Отключить бот
+              </button>
+            ) : null}
+          </div>
+        </form>
+
+        <div className="space-y-4 rounded-2xl border border-page bg-card p-6 shadow-sm">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-page/80">
+            <Smartphone className="h-4 w-4" /> Статус интеграции
+          </h3>
+          <div className="space-y-3 text-sm text-page/70">
+            <p>
+              Статус: {' '}
+              <span className={telegramSettings?.connected ? 'text-emerald-600 font-semibold' : 'text-page/60'}>
+                {telegramSettings?.connected ? 'активно' : 'не подключено'}
+              </span>
+            </p>
+            <p>Канал: {telegramSettings?.channel || 'не указан'}</p>
+            <p>Последняя синхронизация: {formatDateTime(telegramSettings?.lastSync)}</p>
+          </div>
+          <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-xs text-sky-700">
+            Перед запуском убедитесь, что бот приглашён в канал и имеет права на отправку сообщений.
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+
+  const renderIdentSection = () => (
+    <section className="space-y-6">
+      <div className="flex items-start gap-3">
+        <div className="rounded-full bg-emerald-100 p-3 text-emerald-500">
+          <ShieldCheck className="h-5 w-5" />
+        </div>
+        <div>
+          <h2 className="text-xl font-semibold">Подключение к Ident</h2>
+          <p className="text-sm text-page/60">
+            Настройте интеграцию с системой идентификации для автоматической проверки прав доступа.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr),320px]">
+        <form
+          onSubmit={handleIdentSubmit}
+          className="space-y-4 rounded-2xl border border-page bg-card p-6 shadow-sm"
+        >
+          <label className="space-y-1 text-sm">
+            <span className="font-medium text-page/70">API ключ</span>
+            <input
+              required
+              value={identForm?.apiKey ?? ''}
+              onChange={(event) =>
+                setIdentForm((prev) => (prev ? { ...prev, apiKey: event.target.value } : prev))
+              }
+              placeholder="ident_xxxxxxxxx"
+              className="w-full rounded-lg border border-page/50 bg-white px-4 py-3 text-sm shadow-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+            />
+          </label>
+
+          <label className="space-y-1 text-sm">
+            <span className="font-medium text-page/70">Рабочее пространство</span>
+            <input
+              required
+              value={identForm?.workspace ?? ''}
+              onChange={(event) =>
+                setIdentForm((prev) => (prev ? { ...prev, workspace: event.target.value } : prev))
+              }
+              placeholder="clinic-main"
+              className="w-full rounded-lg border border-page/50 bg-white px-4 py-3 text-sm shadow-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+            />
+          </label>
+
+          {renderBanner(identBanner)}
+
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="submit"
+              className="flex items-center gap-2 rounded-lg bg-gradient-to-r from-emerald-500 to-teal-500 px-5 py-3 text-sm font-semibold text-white shadow-lg transition hover:from-emerald-600 hover:to-teal-600 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={isSavingIdent}
+            >
+              {isSavingIdent ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+              Сохранить и подключить
+            </button>
+            {identSettings?.connected ? (
+              <button
+                type="button"
+                onClick={handleIdentDisconnect}
+                className="rounded-lg border border-emerald-300 px-5 py-3 text-sm font-semibold text-emerald-600 transition hover:border-emerald-400 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isSavingIdent}
+              >
+                Отключить интеграцию
+              </button>
+            ) : null}
+          </div>
+        </form>
+
+        <div className="space-y-4 rounded-2xl border border-page bg-card p-6 shadow-sm">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-page/80">
+            <Link2 className="h-4 w-4" /> Статус соединения
+          </h3>
+          <div className="space-y-3 text-sm text-page/70">
+            <p>
+              Статус: {' '}
+              <span className={identSettings?.connected ? 'text-emerald-600 font-semibold' : 'text-page/60'}>
+                {identSettings?.connected ? 'активно' : 'не подключено'}
+              </span>
+            </p>
+            <p>Workspace: {identSettings?.workspace || 'не указан'}</p>
+            <p>Последняя синхронизация: {formatDateTime(identSettings?.lastSync)}</p>
+          </div>
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-xs text-emerald-700">
+            После подключения сотрудники смогут проходить аутентификацию через единую систему Ident.
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+
+  const renderSection = () => {
+    switch (selectedSection) {
+      case 'telegram':
+        return renderTelegramSection();
+      case 'ident':
+        return renderIdentSection();
+      case 'users':
+      default:
+        return renderUsersSection();
+    }
   };
 
   return (
     <div className="min-h-screen bg-page text-page">
       <PortalHeader
         title="Настройки портала"
-        subtitle="Управляйте личным профилем и интеграциями с коммуникационными сервисами"
+        subtitle="Структурируйте профиль, уведомления и подключение внешних сервисов клиники"
       />
 
-      <main className="mx-auto max-w-6xl space-y-8 px-4 py-10">
-        <section className="grid gap-6 lg:grid-cols-[3fr_2fr]">
-          <form
-            onSubmit={handleProfileSubmit}
-            className="rounded-2xl border border-page bg-card p-6 shadow-sm"
-          >
-            <div className="flex items-center gap-3">
-              <UserCog className="h-6 w-6 text-orange-500" />
-              <div>
-                <h2 className="text-lg font-semibold">Профиль пользователя</h2>
-                <p className="text-sm text-page/60">
-                  Обновите контактные данные, чтобы сотрудники знали, как с вами связаться.
-                </p>
-              </div>
-            </div>
+      <main className="mx-auto flex max-w-6xl flex-col gap-8 px-4 py-10 lg:flex-row">
+        <aside className="lg:w-72">
+          <nav className="space-y-2 rounded-2xl border border-page bg-card p-3 shadow-sm">
+            {MENU_ITEMS.map((item) => {
+              const isActive = selectedSection === item.id;
+              const meta =
+                item.id === 'users'
+                  ? userMeta
+                  : item.id === 'telegram'
+                  ? telegramMeta
+                  : identMeta;
 
-            <div className="mt-6 space-y-4">
-              <label className="block">
-                <span className="text-xs font-semibold uppercase tracking-wide text-page/60">
-                  ФИО
-                </span>
-                <input
-                  type="text"
-                  value={profile.name}
-                  onChange={(event) => setProfile((prev) => ({ ...prev, name: event.target.value }))}
-                  className="mt-1 w-full rounded-xl border border-page bg-transparent px-3 py-2 text-sm focus:border-orange-400 focus:outline-none"
-                  placeholder="Ваше имя"
-                />
-              </label>
+              const Icon = item.icon;
 
-              <label className="block">
-                <span className="text-xs font-semibold uppercase tracking-wide text-page/60">
-                  Электронная почта
-                </span>
-                <input
-                  type="email"
-                  value={profile.email}
-                  onChange={(event) => setProfile((prev) => ({ ...prev, email: event.target.value }))}
-                  className="mt-1 w-full rounded-xl border border-page bg-transparent px-3 py-2 text-sm focus:border-orange-400 focus:outline-none"
-                  placeholder="email@clinic.ru"
-                />
-              </label>
-
-              <div className="grid gap-4 sm:grid-cols-2">
-                <label className="block">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-page/60">
-                    Роль в системе
-                  </span>
-                  <input
-                    type="text"
-                    value={profile.role}
-                    onChange={(event) => setProfile((prev) => ({ ...prev, role: event.target.value }))}
-                    className="mt-1 w-full rounded-xl border border-page bg-transparent px-3 py-2 text-sm focus:border-orange-400 focus:outline-none"
-                    placeholder="Администратор"
-                  />
-                </label>
-
-                <label className="block">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-page/60">
-                    Рабочий телефон
-                  </span>
-                  <input
-                    type="tel"
-                    value={profile.phone}
-                    onChange={(event) => setProfile((prev) => ({ ...prev, phone: event.target.value }))}
-                    className="mt-1 w-full rounded-xl border border-page bg-transparent px-3 py-2 text-sm focus:border-orange-400 focus:outline-none"
-                    placeholder="+7 (999) 000-00-00"
-                  />
-                </label>
-              </div>
-
-              <fieldset className="rounded-2xl border border-dashed border-page/70 p-4">
-                <legend className="px-2 text-xs font-semibold uppercase tracking-wide text-page/60">
-                  Уведомления
-                </legend>
-                <div className="mt-3 space-y-3 text-sm">
-                  <label className="flex items-center justify-between gap-4">
-                    <span>Изменения в расписании</span>
-                    <input
-                      type="checkbox"
-                      checked={notifications.scheduleUpdates}
-                      onChange={(event) =>
-                        setNotifications((prev) => ({
-                          ...prev,
-                          scheduleUpdates: event.target.checked,
-                        }))
-                      }
-                      className="h-4 w-4 rounded border-page text-orange-500 focus:ring-orange-400"
-                    />
-                  </label>
-                  <label className="flex items-center justify-between gap-4">
-                    <span>Заявки на доступ</span>
-                    <input
-                      type="checkbox"
-                      checked={notifications.approvals}
-                      onChange={(event) =>
-                        setNotifications((prev) => ({
-                          ...prev,
-                          approvals: event.target.checked,
-                        }))
-                      }
-                      className="h-4 w-4 rounded border-page text-orange-500 focus:ring-orange-400"
-                    />
-                  </label>
-                  <label className="flex items-center justify-between gap-4">
-                    <span>Маркетинговые активности</span>
-                    <input
-                      type="checkbox"
-                      checked={notifications.marketing}
-                      onChange={(event) =>
-                        setNotifications((prev) => ({
-                          ...prev,
-                          marketing: event.target.checked,
-                        }))
-                      }
-                      className="h-4 w-4 rounded border-page text-orange-500 focus:ring-orange-400"
-                    />
-                  </label>
-                  <label className="flex items-center justify-between gap-4">
-                    <span>Ежедневный дайджест в Telegram</span>
-                    <input
-                      type="checkbox"
-                      checked={notifications.dailyDigest}
-                      onChange={(event) =>
-                        setNotifications((prev) => ({
-                          ...prev,
-                          dailyDigest: event.target.checked,
-                        }))
-                      }
-                      className="h-4 w-4 rounded border-page text-orange-500 focus:ring-orange-400"
-                    />
-                  </label>
-                </div>
-              </fieldset>
-            </div>
-
-            <div className="mt-6 flex items-center justify-between">
-              <div className="text-xs text-page/60">
-                Последнее сохранение: {profileMessage ? 'только что' : 'не сохранено'}
-              </div>
-              <button
-                type="submit"
-                className="rounded-full bg-gradient-to-r from-orange-500 to-yellow-500 px-5 py-2 text-sm font-semibold text-white shadow-md transition hover:from-orange-600 hover:to-yellow-600"
-              >
-                Сохранить профиль
-              </button>
-            </div>
-
-            {profileMessage ? (
-              <p className="mt-3 flex items-center gap-2 text-sm text-emerald-600">
-                <CheckCircle2 className="h-4 w-4" />
-                {profileMessage}
-              </p>
-            ) : null}
-          </form>
-
-          <div className="space-y-6">
-            <div className="rounded-2xl border border-page bg-card p-6 shadow-sm">
-              <div className="flex items-center gap-3">
-                <UsersRound className="h-6 w-6 text-sky-500" />
-                <div>
-                  <h2 className="text-lg font-semibold">Подключение команды</h2>
-                  <p className="text-sm text-page/60">
-                    Управляйте доступом сотрудников к Телеграм-ассистенту клиники.
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-4 space-y-3 text-sm">
-                {teamConnections.map((member) => (
-                  <div
-                    key={member.id}
-                    className="flex items-center justify-between rounded-2xl border border-page px-4 py-3"
-                  >
-                    <div>
-                      <p className="font-medium">{member.name}</p>
-                      <p className="text-xs text-page/60">{member.role}</p>
-                      <p className="text-xs text-page/70">{member.telegramHandle}</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => toggleTeamMemberConnection(member.id)}
-                      className={`rounded-full px-4 py-2 text-xs font-semibold transition ${
-                        member.connected
-                          ? 'bg-emerald-500/10 text-emerald-600'
-                          : 'bg-orange-500 text-white hover:bg-orange-600'
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setSelectedSection(item.id)}
+                  className={`flex w-full items-center justify-between gap-3 rounded-xl border px-4 py-3 text-left transition ${
+                    isActive
+                      ? 'border-orange-300 bg-orange-50 text-orange-700 shadow-sm'
+                      : 'border-transparent hover:border-orange-200 hover:bg-orange-50/60'
+                  }`}
+                >
+                  <span className="flex items-start gap-3">
+                    <span
+                      className={`rounded-full p-2 ${
+                        isActive ? 'bg-orange-100 text-orange-500' : 'bg-page/10 text-page/60'
                       }`}
                     >
-                      {member.connected ? 'Подключено' : 'Подключить'}
-                    </button>
-                  </div>
-                ))}
-              </div>
+                      <Icon className="h-4 w-4" />
+                    </span>
+                    <span>
+                      <span className="block text-sm font-semibold">{item.label}</span>
+                      <span className="block text-xs text-page/60">{item.description}</span>
+                    </span>
+                  </span>
+                  <span className="text-xs font-medium uppercase tracking-wide text-page/50">{meta}</span>
+                </button>
+              );
+            })}
+          </nav>
+        </aside>
 
-              <div className="mt-4 rounded-xl border border-dashed border-page/70 bg-card/80 px-4 py-3 text-xs text-page/60">
-                Активных подключений: {connectedCount} из {teamConnections.length}
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-page bg-card p-6 shadow-sm">
-              <div className="flex items-center gap-3">
-                <Smartphone className="h-6 w-6 text-purple-500" />
-                <div>
-                  <h2 className="text-lg font-semibold">Мобильный ассистент</h2>
-                  <p className="text-sm text-page/60">
-                    Сканируйте QR-код, чтобы быстро авторизовать сотрудника в боте клиники.
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-4 rounded-2xl border border-dashed border-page/60 p-6 text-center text-sm text-page/60">
-                Здесь появится QR-код после подключения телеграм-бота.
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section className="grid gap-6 lg:grid-cols-2">
-          <form
-            onSubmit={handleTelegramSubmit}
-            className="rounded-2xl border border-page bg-card p-6 shadow-sm"
-          >
-            <div className="flex items-center gap-3">
-              <Bot className="h-6 w-6 text-sky-500" />
-              <div>
-                <h2 className="text-lg font-semibold">Подключение Telegram-бота</h2>
-                <p className="text-sm text-page/60">
-                  Укажите токен бота и канал для уведомлений, чтобы клиенты и сотрудники получали обновления.
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-6 space-y-4">
-              <label className="block text-sm">
-                <span className="text-xs font-semibold uppercase tracking-wide text-page/60">
-                  Токен бота
-                </span>
-                <input
-                  type="text"
-                  value={telegramBot.token}
-                  onChange={(event) => setTelegramBot((prev) => ({ ...prev, token: event.target.value }))}
-                  className="mt-1 w-full rounded-xl border border-page bg-transparent px-3 py-2 text-sm focus:border-orange-400 focus:outline-none"
-                  placeholder="123456:ABCDEF..."
-                />
-              </label>
-              <label className="block text-sm">
-                <span className="text-xs font-semibold uppercase tracking-wide text-page/60">
-                  Канал или чат
-                </span>
-                <input
-                  type="text"
-                  value={telegramBot.channel}
-                  onChange={(event) => setTelegramBot((prev) => ({ ...prev, channel: event.target.value }))}
-                  className="mt-1 w-full rounded-xl border border-page bg-transparent px-3 py-2 text-sm focus:border-orange-400 focus:outline-none"
-                  placeholder="@clinic_channel"
-                />
-              </label>
-            </div>
-
-            <div className="mt-6 flex items-center justify-between text-xs text-page/60">
-              <div>
-                Статус: {telegramBot.connected ? 'подключено' : 'ожидает подключения'}
-                <br />
-                Последняя синхронизация: {telegramBot.lastSync || 'не выполнялась'}
-              </div>
-              <button
-                type="submit"
-                className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-sky-500 to-indigo-500 px-5 py-2 text-sm font-semibold text-white shadow-md transition hover:from-sky-600 hover:to-indigo-600"
-              >
-                <Link2 className="h-4 w-4" />
-                Сохранить подключение
-              </button>
-            </div>
-
-            {telegramMessage ? (
-              <p className="mt-3 flex items-center gap-2 text-sm text-emerald-600">
-                <CheckCircle2 className="h-4 w-4" />
-                {telegramMessage}
-              </p>
-            ) : null}
-          </form>
-
-          <form onSubmit={handleIdentSubmit} className="rounded-2xl border border-page bg-card p-6 shadow-sm">
-            <div className="flex items-center gap-3">
-              <ShieldCheck className="h-6 w-6 text-emerald-500" />
-              <div>
-                <h2 className="text-lg font-semibold">Интеграция с Ident</h2>
-                <p className="text-sm text-page/60">
-                  Свяжите портал с системой идентификации Ident для безопасного управления доступами.
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-6 space-y-4">
-              <label className="block text-sm">
-                <span className="text-xs font-semibold uppercase tracking-wide text-page/60">
-                  API ключ
-                </span>
-                <input
-                  type="text"
-                  value={identIntegration.apiKey}
-                  onChange={(event) => setIdentIntegration((prev) => ({ ...prev, apiKey: event.target.value }))}
-                  className="mt-1 w-full rounded-xl border border-page bg-transparent px-3 py-2 text-sm focus:border-orange-400 focus:outline-none"
-                  placeholder="IDENT-API-KEY"
-                />
-              </label>
-              <label className="block text-sm">
-                <span className="text-xs font-semibold uppercase tracking-wide text-page/60">
-                  Рабочее пространство
-                </span>
-                <input
-                  type="text"
-                  value={identIntegration.workspace}
-                  onChange={(event) => setIdentIntegration((prev) => ({ ...prev, workspace: event.target.value }))}
-                  className="mt-1 w-full rounded-xl border border-page bg-transparent px-3 py-2 text-sm focus:border-orange-400 focus:outline-none"
-                  placeholder="clinic-main"
-                />
-              </label>
-            </div>
-
-            <div className="mt-6 flex items-center justify-between text-xs text-page/60">
-              <div>
-                Статус: {identIntegration.connected ? 'активно' : 'не подключено'}
-                <br />
-                Последняя синхронизация: {identIntegration.lastSync || 'не выполнялась'}
-              </div>
-              <button
-                type="submit"
-                className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 px-5 py-2 text-sm font-semibold text-white shadow-md transition hover:from-emerald-600 hover:to-teal-600"
-              >
-                <KeyRound className="h-4 w-4" />
-                Подключить Ident
-              </button>
-            </div>
-
-            {identMessage ? (
-              <p className="mt-3 flex items-center gap-2 text-sm text-emerald-600">
-                <CheckCircle2 className="h-4 w-4" />
-                {identMessage}
-              </p>
-            ) : null}
-          </form>
-        </section>
+        <section className="flex-1 space-y-8">{renderSection()}</section>
       </main>
     </div>
   );
