@@ -247,6 +247,46 @@ export default function Settings() {
     }
   }, [isAdmin]);
 
+  const loadIdentPreview = useCallback(
+    async (settingsToUse: IdentIntegrationSettings) => {
+      if (
+        !settingsToUse.host.trim() ||
+        !settingsToUse.port.trim() ||
+        !settingsToUse.username.trim() ||
+        !settingsToUse.password
+      ) {
+        return null;
+      }
+
+      setIsLoadingIdentPreview(true);
+      try {
+        const config = createIdentConnectionConfig(settingsToUse);
+        const result = await fetchIdentPreview(config);
+        setIdentPreview(result);
+        return result;
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error
+            ? error.message
+            : 'Не удалось получить данные из модуля iDent.';
+        setIdentPreview({
+          counts: {},
+          errors: {
+            doctors: errorMessage,
+            branches: errorMessage,
+            schedule: errorMessage,
+            leads: errorMessage,
+            calls: errorMessage,
+          },
+        });
+        throw error;
+      } finally {
+        setIsLoadingIdentPreview(false);
+      }
+    },
+    [],
+  );
+
   useEffect(() => {
     if (!currentUser?.id) {
       return;
@@ -534,46 +574,6 @@ export default function Settings() {
       });
     }
   };
-
-  const loadIdentPreview = useCallback(
-    async (settingsToUse: IdentIntegrationSettings) => {
-      if (
-        !settingsToUse.host.trim() ||
-        !settingsToUse.port.trim() ||
-        !settingsToUse.username.trim() ||
-        !settingsToUse.password
-      ) {
-        return null;
-      }
-
-      setIsLoadingIdentPreview(true);
-      try {
-        const config = createIdentConnectionConfig(settingsToUse);
-        const result = await fetchIdentPreview(config);
-        setIdentPreview(result);
-        return result;
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error
-            ? error.message
-            : 'Не удалось получить данные из модуля iDent.';
-        setIdentPreview({
-          counts: {},
-          errors: {
-            doctors: errorMessage,
-            branches: errorMessage,
-            schedule: errorMessage,
-            leads: errorMessage,
-            calls: errorMessage,
-          },
-        });
-        throw error;
-      } finally {
-        setIsLoadingIdentPreview(false);
-      }
-    },
-    [],
-  );
 
   const handleIdentEntityToggle = (key: IdentEntityKey, value: boolean) => {
     setIdentForm((prev) => (prev ? { ...prev, [key]: value } : prev));
