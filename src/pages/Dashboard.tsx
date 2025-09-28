@@ -1,12 +1,12 @@
 import React from 'react';
-import { CalendarDays, CheckCircle2, Moon, PhoneCall, Sun, Users } from 'lucide-react';
+import { CalendarDays, CheckCircle2, PhoneCall, Users } from 'lucide-react';
 
 import DoctorConfirmationPanel from '../components/DoctorConfirmationPanel';
 import ScheduleTable from '../components/ScheduleTable';
 import VoiceAssistantPanel from '../components/VoiceAssistantPanel';
 import CalendarView from '../components/CalendarView';
 import { ScheduleProvider, useSchedule } from '../context/ScheduleContext';
-import { useDark } from '../hooks/useDark';
+import PortalHeader from '../components/PortalHeader';
 import { formatDateKey } from '../utils/date';
 
 export default function Dashboard() {
@@ -18,7 +18,6 @@ export default function Dashboard() {
 }
 
 function DashboardContent() {
-  const [dark, toggleDark] = useDark();
   const { appointments, callTasks, doctors } = useSchedule();
 
   const todayKey = formatDateKey(new Date());
@@ -57,18 +56,10 @@ function DashboardContent() {
 
   return (
     <div className="min-h-screen bg-page text-page">
-      <header className="sticky top-0 z-10 border-b border-page bg-card/80 backdrop-blur-lg shadow-sm">
-        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
-          <h1 className="text-xl font-bold">Клиника доктора Денисенко</h1>
-          <button
-            onClick={toggleDark}
-            className="rounded-full border border-page bg-card p-2"
-            title="Переключить тему"
-          >
-            {dark ? <Moon className="accent h-5 w-5" /> : <Sun className="accent h-5 w-5" />}
-          </button>
-        </div>
-      </header>
+      <PortalHeader
+        title="Клиника доктора Денисенко"
+        subtitle="Управление расписанием, персоналом и коммуникациями"
+      />
 
       <main className="mx-auto max-w-7xl space-y-8 px-4 py-10">
         <div className="rounded-2xl bg-gradient-to-r from-orange-400 to-yellow-400 p-8 text-white shadow-xl">

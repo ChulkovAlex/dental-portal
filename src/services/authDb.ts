@@ -6,6 +6,7 @@ export interface AuthUser {
   passwordHash: string;
   role: string;
   needsPasswordSetup: boolean;
+  name?: string;
 }
 
 class AuthDatabase extends Dexie {
@@ -33,6 +34,7 @@ const initializeAuthDb = (async () => {
       passwordHash: '',
       role: 'admin',
       needsPasswordSetup: true,
+      name: 'Главный администратор',
     });
   }
 })();

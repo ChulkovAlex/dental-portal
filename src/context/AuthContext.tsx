@@ -3,7 +3,11 @@ import bcrypt from 'bcryptjs';
 
 import { AuthUser, authDb, authDbReady } from '../services/authDb';
 
-export type AuthErrorCode = 'user-not-found' | 'invalid-password' | 'needs-password-setup';
+export type AuthErrorCode =
+  | 'user-not-found'
+  | 'invalid-password'
+  | 'needs-password-setup'
+  | 'user-already-exists';
 
 export class AuthError extends Error {
   public code: AuthErrorCode;
@@ -17,6 +21,14 @@ export class AuthError extends Error {
   }
 }
 
+interface CreateUserPayload {
+  email: string;
+  role: string;
+  password?: string;
+  requirePasswordSetup?: boolean;
+  name?: string;
+}
+
 interface AuthContextValue {
   currentUser: AuthUser | null;
   users: AuthUser[];
@@ -24,6 +36,7 @@ interface AuthContextValue {
   login: (email: string, password: string) => Promise<AuthUser>;
   logout: () => Promise<void>;
   completeAdminSetup: (userId: number, password: string) => Promise<AuthUser>;
+  createUser: (payload: CreateUserPayload) => Promise<AuthUser>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -126,6 +139,39 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     setCurrentUser(null);
   }, []);
 
+  const createUser = useCallback(
+    async ({ email, role, password, requirePasswordSetup, name }: CreateUserPayload) => {
+      await authDbReady;
+      const normalizedEmail = email.trim().toLowerCase();
+
+      const existingUser = await authDb.users.where('email').equals(normalizedEmail).first();
+      if (existingUser) {
+        throw new AuthError('user-already-exists', 'Пользователь с таким e-mail уже существует.', existingUser);
+      }
+
+      const needsPasswordSetup = requirePasswordSetup ?? !password;
+      const passwordHash = password ? await bcrypt.hash(password, 10) : '';
+
+      const userId = await authDb.users.add({
+        email: normalizedEmail,
+        passwordHash,
+        role,
+        needsPasswordSetup,
+        name: name?.trim() ? name.trim() : undefined,
+      });
+
+      const allUsers = await loadUsers();
+      const createdUser = allUsers.find((user) => user.id === userId);
+
+      if (!createdUser) {
+        throw new AuthError('user-not-found', 'Созданный пользователь не найден в базе');
+      }
+
+      return createdUser;
+    },
+    [loadUsers],
+  );
+
   const value = useMemo(
     () => ({
       currentUser,
@@ -134,8 +180,9 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       login,
       logout,
       completeAdminSetup,
+      createUser,
     }),
-    [completeAdminSetup, currentUser, loading, login, logout, users],
+    [completeAdminSetup, createUser, currentUser, loading, login, logout, users],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
