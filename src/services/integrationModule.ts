@@ -27,10 +27,6 @@ export interface IdentIntegrationSettings {
   port: string;
   username: string;
   password: string;
-  apiKey: string;
-  workspace: string;
-  clinicId: string;
-  branchFilters: string[];
   autoSync: IdentAutoSyncInterval;
   scheduleWindow: number;
   syncDoctors: boolean;
@@ -63,10 +59,6 @@ const defaultState: IntegrationSettingsState = {
     port: '',
     username: '',
     password: '',
-    apiKey: '',
-    workspace: '',
-    clinicId: '',
-    branchFilters: [],
     autoSync: 'manual',
     scheduleWindow: 7,
     syncDoctors: true,
@@ -97,10 +89,7 @@ const getStorage = (): Storage | null => {
 const cloneState = (state: IntegrationSettingsState): IntegrationSettingsState => ({
   userExtensions: { ...state.userExtensions },
   telegram: { ...state.telegram },
-  ident: {
-    ...state.ident,
-    branchFilters: Array.isArray(state.ident.branchFilters) ? [...state.ident.branchFilters] : [],
-  },
+  ident: { ...state.ident },
 });
 
 const loadState = (): IntegrationSettingsState => {
@@ -137,9 +126,6 @@ const loadState = (): IntegrationSettingsState => {
           typeof parsed.ident?.username === 'string' ? parsed.ident.username : defaultState.ident.username,
         password:
           typeof parsed.ident?.password === 'string' ? parsed.ident.password : defaultState.ident.password,
-        branchFilters: Array.isArray(parsed.ident?.branchFilters)
-          ? parsed.ident!.branchFilters!.map((value) => String(value).trim()).filter(Boolean)
-          : [...defaultState.ident.branchFilters],
       },
     } satisfies IntegrationSettingsState;
   } catch (error) {
@@ -394,10 +380,6 @@ export interface UpdateIdentSettingsPayload {
   port?: string | number;
   username?: string;
   password?: string;
-  apiKey?: string;
-  workspace?: string;
-  clinicId?: string;
-  branchFilters?: string[];
   autoSync?: IdentAutoSyncInterval;
   scheduleWindow?: number;
   syncDoctors?: boolean;
@@ -430,24 +412,6 @@ export const updateIdentSettings = async (
 
     if (typeof updates.password === 'string') {
       ident.password = updates.password;
-    }
-
-    if (typeof updates.apiKey === 'string') {
-      ident.apiKey = updates.apiKey.trim();
-    }
-
-    if (typeof updates.workspace === 'string') {
-      ident.workspace = updates.workspace.trim();
-    }
-
-    if (typeof updates.clinicId === 'string') {
-      ident.clinicId = updates.clinicId.trim();
-    }
-
-    if (Array.isArray(updates.branchFilters)) {
-      ident.branchFilters = updates.branchFilters
-        .map((value) => value.trim())
-        .filter((value, index, array) => Boolean(value) && array.indexOf(value) === index);
     }
 
     if (typeof updates.autoSync === 'string') {
@@ -489,19 +453,10 @@ export const updateIdentSettings = async (
 
     if (updates.syncNow) {
       ident.lastSync = new Date().toISOString();
-      ident.connected = Boolean(
-        ident.apiKey &&
-        ident.workspace &&
-        ident.clinicId &&
-        ident.branchFilters.length &&
-        (ident.syncDoctors || ident.syncBranches || ident.syncSchedule || ident.syncLeads || ident.syncCalls),
-      );
+      ident.connected = Boolean(ident.host && ident.port && ident.username && ident.password);
     }
 
-    state.ident = {
-      ...ident,
-      branchFilters: [...ident.branchFilters],
-    };
+    state.ident = { ...ident };
     return state;
   });
 

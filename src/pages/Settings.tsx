@@ -208,7 +208,6 @@ export default function Settings() {
   const [identForm, setIdentForm] = useState<IdentIntegrationSettings | null>(null);
   const [identBanner, setIdentBanner] = useState<BannerState>(null);
   const [isSavingIdent, setIsSavingIdent] = useState(false);
-  const [identBranchInput, setIdentBranchInput] = useState('');
   const [identPreview, setIdentPreview] = useState<IdentPreviewResult | null>(null);
   const [isLoadingIdentPreview, setIsLoadingIdentPreview] = useState(false);
 
@@ -460,10 +459,6 @@ export default function Settings() {
     setUserBanner(null);
   }, [isAdmin, selectedUserId]);
 
-  useEffect(() => {
-    setIdentBranchInput('');
-  }, [identForm?.branchFilters]);
-
   const userMeta = useMemo(() => {
     if (!isAdmin) {
       return selfProfile?.email ?? '';
@@ -494,11 +489,7 @@ export default function Settings() {
       return 'неактивно';
     }
 
-    const hasBasicConfig = Boolean(
-      identSettings.apiKey && identSettings.workspace && identSettings.clinicId && identSettings.branchFilters.length,
-    );
-
-    return hasBasicConfig ? 'готово к запуску' : 'ожидает конфигурации';
+    return 'готово к запуску';
   }, [identSettings]);
 
   const identAutoSyncLabel = useMemo(() => {
@@ -527,52 +518,6 @@ export default function Settings() {
     value: IdentIntegrationSettings[K],
   ) => {
     setIdentForm((prev) => (prev ? { ...prev, [key]: value } : prev));
-  };
-
-  const handleIdentBranchAdd = () => {
-    setIdentForm((prev) => {
-      if (!prev) {
-        return prev;
-      }
-
-      const nextValue = identBranchInput.trim();
-      if (!nextValue) {
-        return prev;
-      }
-
-      if (prev.branchFilters.includes(nextValue)) {
-        return prev;
-      }
-
-      return {
-        ...prev,
-        branchFilters: [...prev.branchFilters, nextValue],
-      };
-    });
-    setIdentBranchInput('');
-  };
-
-  const handleIdentBranchRemove = (value: string) => {
-    setIdentForm((prev) => (prev ? { ...prev, branchFilters: prev.branchFilters.filter((item) => item !== value) } : prev));
-  };
-
-  const handleIdentBranchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Enter' || event.key === ',') {
-      event.preventDefault();
-      handleIdentBranchAdd();
-    }
-
-    if (event.key === 'Backspace' && !identBranchInput) {
-      setIdentForm((prev) => {
-        if (!prev || !prev.branchFilters.length) {
-          return prev;
-        }
-
-        const next = [...prev.branchFilters];
-        next.pop();
-        return { ...prev, branchFilters: next };
-      });
-    }
   };
 
   const handleIdentEntityToggle = (key: IdentEntityKey, value: boolean) => {
@@ -731,10 +676,6 @@ export default function Settings() {
         port: trimmedPort,
         username: trimmedUsername,
         password: identForm.password,
-        apiKey: identForm.apiKey,
-        workspace: identForm.workspace,
-        clinicId: identForm.clinicId,
-        branchFilters: identForm.branchFilters,
         autoSync: identForm.autoSync,
         scheduleWindow: identForm.scheduleWindow,
         syncDoctors: identForm.syncDoctors,
@@ -1158,87 +1099,6 @@ export default function Settings() {
             </label>
           </div>
 
-          <div className="grid gap-4 md:grid-cols-2">
-            <label className="space-y-1 text-sm">
-              <span className="font-medium text-page/70">API ключ</span>
-              <input
-                required
-                value={identForm?.apiKey ?? ''}
-                onChange={(event) => handleIdentFormChange('apiKey', event.target.value)}
-                placeholder="ident_xxxxxxxxx"
-                className="w-full rounded-lg border border-page/50 bg-white px-4 py-3 text-sm shadow-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
-              />
-            </label>
-
-            <label className="space-y-1 text-sm">
-              <span className="font-medium text-page/70">Рабочее пространство</span>
-              <input
-                required
-                value={identForm?.workspace ?? ''}
-                onChange={(event) => handleIdentFormChange('workspace', event.target.value)}
-                placeholder="clinic-main"
-                className="w-full rounded-lg border border-page/50 bg-white px-4 py-3 text-sm shadow-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
-              />
-            </label>
-
-            <label className="space-y-1 text-sm md:col-span-2">
-              <span className="font-medium text-page/70">ID клиники в iDent</span>
-              <input
-                required
-                value={identForm?.clinicId ?? ''}
-                onChange={(event) => handleIdentFormChange('clinicId', event.target.value)}
-                placeholder="Например, clinic-42"
-                className="w-full rounded-lg border border-page/50 bg-white px-4 py-3 text-sm shadow-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
-              />
-            </label>
-          </div>
-
-          <div className="space-y-2 text-sm">
-            <div className="flex items-center justify-between gap-4">
-              <span className="font-medium text-page/70">Филиалы для синхронизации</span>
-              <span className="text-xs text-page/50">Введите код филиала и нажмите Enter</span>
-            </div>
-            <div className="flex flex-wrap gap-3">
-              <div className="flex min-w-[220px] flex-1 flex-wrap items-center gap-2 rounded-lg border border-page/40 bg-white px-3 py-2 text-sm shadow-sm">
-                {identForm?.branchFilters?.length ? (
-                  identForm.branchFilters.map((branch) => (
-                    <span
-                      key={branch}
-                      className="flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-1 text-xs font-medium text-emerald-700"
-                    >
-                      {branch}
-                      <button
-                        type="button"
-                        onClick={() => handleIdentBranchRemove(branch)}
-                        className="rounded-full bg-emerald-200 px-1 text-[10px] font-semibold text-emerald-700 transition hover:bg-emerald-300"
-                        aria-label={`Убрать филиал ${branch}`}
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))
-                ) : (
-                  <span className="text-xs text-page/50">По умолчанию будут загружены все филиалы</span>
-                )}
-                <input
-                  value={identBranchInput}
-                  onChange={(event) => setIdentBranchInput(event.target.value)}
-                  onKeyDown={handleIdentBranchKeyDown}
-                  placeholder="Например, main-office"
-                  className="flex-1 min-w-[140px] border-none bg-transparent text-sm focus:outline-none"
-                />
-              </div>
-              <button
-                type="button"
-                onClick={handleIdentBranchAdd}
-                className="rounded-lg border border-emerald-300 px-4 py-2 text-xs font-semibold text-emerald-600 transition hover:border-emerald-400 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
-                disabled={!identBranchInput.trim()}
-              >
-                Добавить филиал
-              </button>
-            </div>
-          </div>
-
           <div className="space-y-6">
             <div>
               <h3 className="text-sm font-semibold text-page/70">Какие данные получать из iDent</h3>
@@ -1383,14 +1243,6 @@ export default function Settings() {
                 : 'не указан'}
             </p>
             <p>Логин: {identSettings?.username || 'не указан'}</p>
-            <p>Workspace: {identSettings?.workspace || 'не указан'}</p>
-            <p>ID клиники: {identSettings?.clinicId || 'не указан'}</p>
-            <p>
-              Филиалы:{' '}
-              {identSettings?.branchFilters?.length
-                ? identSettings.branchFilters.join(', ')
-                : 'все филиалы'}
-            </p>
             <p>
               Периодичность: {identAutoSyncLabel || 'не выбрана'}
             </p>
