@@ -28,6 +28,12 @@ import {
   updateTelegramSettings,
   updateUserProfile,
 } from '../services/integrationModule';
+import {
+  createIdentConnectionConfig,
+  fetchIdentPreview,
+  type IdentConnectionResource,
+  type IdentPreviewResult,
+} from '../services/identApi';
 
 type MenuSection = 'users' | 'telegram' | 'ident';
 
@@ -49,6 +55,21 @@ interface UserFormState {
 }
 
 type BannerState = { type: 'success' | 'error'; text: string } | null;
+
+type IdentLogLevel = 'info' | 'success' | 'error';
+
+interface IdentLogEntry {
+  id: string;
+  level: IdentLogLevel;
+  message: string;
+  timestamp: string;
+}
+
+const IDENT_LOG_COLORS: Record<IdentLogLevel, string> = {
+  info: 'text-page/60',
+  success: 'text-emerald-600',
+  error: 'text-red-500',
+};
 
 const MENU_ITEMS: MenuItem[] = [
   {
@@ -134,12 +155,67 @@ const IDENT_AUTO_SYNC_OPTIONS: Array<{
   },
 ];
 
+const IDENT_PREVIEW_LABELS: Record<IdentConnectionResource, string> = {
+  doctors: 'Врачи',
+  branches: 'Филиалы',
+  schedule: 'Расписание',
+  leads: 'Лиды',
+  calls: 'Звонки',
+};
+
+const summarizeIdentPreview = (preview: IdentPreviewResult) => {
+  const parts = (Object.keys(IDENT_PREVIEW_LABELS) as IdentConnectionResource[])
+    .map((resource) => {
+      const label = IDENT_PREVIEW_LABELS[resource];
+      const error = preview.errors[resource];
+      const count = preview.counts[resource];
+
+      if (error) {
+        return `${label}: ошибка`;
+      }
+
+      if (typeof count === 'number') {
+        return `${label}: ${count}`;
+      }
+
+      return null;
+    })
+    .filter((item): item is string => Boolean(item));
+
+  if (!parts.length) {
+    return '';
+  }
+
+  const summary = parts.slice(0, 3).join(', ');
+  return parts.length > 3 ? `${summary} и другие данные` : summary;
+};
+
 const createEmptyUserForm = (): UserFormState => ({
   name: '',
   email: '',
   role: 'reception',
   phone: '',
   telegramHandle: '',
+});
+
+const createEmptyIdentSettings = (): IdentIntegrationSettings => ({
+  host: '',
+  port: '',
+  username: '',
+  password: '',
+  apiKey: '',
+  workspace: '',
+  clinicId: '',
+  branchFilters: [],
+  autoSync: 'manual',
+  scheduleWindow: 7,
+  syncDoctors: true,
+  syncBranches: true,
+  syncSchedule: true,
+  syncLeads: false,
+  syncCalls: false,
+  connected: false,
+  lastSync: undefined,
 });
 
 const formatDateTime = (iso?: string) => {
@@ -171,6 +247,15 @@ const formatUsersMeta = (count: number) => {
   return `${count} сотрудников`;
 };
 
+const formatLogTimestamp = (iso: string) => {
+  try {
+    return new Date(iso).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  } catch (error) {
+    console.error('Не удалось преобразовать время события подключения', error);
+    return iso;
+  }
+};
+
 export default function Settings() {
   const { currentUser, refreshUsers } = useAuth();
 
@@ -191,10 +276,30 @@ export default function Settings() {
   const [isSavingTelegram, setIsSavingTelegram] = useState(false);
 
   const [identSettings, setIdentSettings] = useState<IdentIntegrationSettings | null>(null);
-  const [identForm, setIdentForm] = useState<IdentIntegrationSettings | null>(null);
+  const [identForm, setIdentForm] = useState<IdentIntegrationSettings>(createEmptyIdentSettings);
   const [identBanner, setIdentBanner] = useState<BannerState>(null);
   const [isSavingIdent, setIsSavingIdent] = useState(false);
   const [identBranchInput, setIdentBranchInput] = useState('');
+  const [identPreview, setIdentPreview] = useState<IdentPreviewResult | null>(null);
+  const [isLoadingIdentPreview, setIsLoadingIdentPreview] = useState(false);
+  const [isTestingIdentConnection, setIsTestingIdentConnection] = useState(false);
+  const [identLogEntries, setIdentLogEntries] = useState<IdentLogEntry[]>([]);
+
+  const appendIdentLog = useCallback((level: IdentLogLevel, message: string) => {
+    setIdentLogEntries((prev) => [
+      ...prev,
+      {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        level,
+        message,
+        timestamp: new Date().toISOString(),
+      },
+    ]);
+  }, []);
+
+  const clearIdentLog = useCallback(() => {
+    setIdentLogEntries([]);
+  }, []);
 
   const refreshSelfProfile = useCallback(async () => {
     if (!currentUser?.id) {
@@ -265,7 +370,7 @@ export default function Settings() {
       setTelegramSettings(telegram);
       setTelegramForm(telegram);
       setIdentSettings(ident);
-      setIdentForm(ident);
+      setIdentForm(ident ?? createEmptyIdentSettings());
     };
 
     void load();
@@ -320,6 +425,59 @@ export default function Settings() {
   }, [currentUser?.id, isAdmin, selectedUserId, users]);
 
   useEffect(() => {
+    if (!identSettings) {
+      setIdentPreview(null);
+      return;
+    }
+
+    const hasCredentials =
+      identSettings.host.trim() &&
+      identSettings.port.trim() &&
+      identSettings.username.trim() &&
+      identSettings.password;
+
+    if (!hasCredentials) {
+      setIdentPreview(null);
+      return;
+    }
+
+    if (!identSettings.connected) {
+      return;
+    }
+
+    if (identPreview && Object.keys(identPreview.counts).length > 0) {
+      return;
+    }
+
+    let isCancelled = false;
+
+    const run = async () => {
+      try {
+        await loadIdentPreview(identSettings);
+      } catch (error) {
+        if (!isCancelled) {
+          console.error('Не удалось обновить статистику iDent', error);
+        }
+      }
+    };
+
+    void run();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [
+    identPreview,
+    identSettings,
+    identSettings?.connected,
+    identSettings?.host,
+    identSettings?.password,
+    identSettings?.port,
+    identSettings?.username,
+    loadIdentPreview,
+  ]);
+
+  useEffect(() => {
     if (isAdmin) {
       if (selectedUserId === 'new') {
         setUserForm(createEmptyUserForm());
@@ -353,7 +511,7 @@ export default function Settings() {
 
   useEffect(() => {
     setIdentBranchInput('');
-  }, [identForm?.branchFilters]);
+  }, [identForm.branchFilters]);
 
   const userMeta = useMemo(() => {
     if (!isAdmin) {
@@ -377,11 +535,19 @@ export default function Settings() {
       return 'подключено';
     }
 
+    const hasConnectionCredentials = Boolean(
+      identSettings.host && identSettings.port && identSettings.username && identSettings.password,
+    );
+
+    if (!hasConnectionCredentials) {
+      return 'неактивно';
+    }
+
     const hasBasicConfig = Boolean(
       identSettings.apiKey && identSettings.workspace && identSettings.clinicId && identSettings.branchFilters.length,
     );
 
-    return hasBasicConfig ? 'готово к запуску' : 'неактивно';
+    return hasBasicConfig ? 'готово к запуску' : 'ожидает конфигурации';
   }, [identSettings]);
 
   const identAutoSyncLabel = useMemo(() => {
@@ -409,15 +575,11 @@ export default function Settings() {
     key: K,
     value: IdentIntegrationSettings[K],
   ) => {
-    setIdentForm((prev) => (prev ? { ...prev, [key]: value } : prev));
+    setIdentForm((prev) => ({ ...prev, [key]: value }));
   };
 
   const handleIdentBranchAdd = () => {
     setIdentForm((prev) => {
-      if (!prev) {
-        return prev;
-      }
-
       const nextValue = identBranchInput.trim();
       if (!nextValue) {
         return prev;
@@ -436,7 +598,10 @@ export default function Settings() {
   };
 
   const handleIdentBranchRemove = (value: string) => {
-    setIdentForm((prev) => (prev ? { ...prev, branchFilters: prev.branchFilters.filter((item) => item !== value) } : prev));
+    setIdentForm((prev) => ({
+      ...prev,
+      branchFilters: prev.branchFilters.filter((item) => item !== value),
+    }));
   };
 
   const handleIdentBranchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -447,7 +612,7 @@ export default function Settings() {
 
     if (event.key === 'Backspace' && !identBranchInput) {
       setIdentForm((prev) => {
-        if (!prev || !prev.branchFilters.length) {
+        if (!prev.branchFilters.length) {
           return prev;
         }
 
@@ -458,8 +623,48 @@ export default function Settings() {
     }
   };
 
+  const loadIdentPreview = useCallback(
+    async (settingsToUse: IdentIntegrationSettings) => {
+      if (
+        !settingsToUse.host.trim() ||
+        !settingsToUse.port.trim() ||
+        !settingsToUse.username.trim() ||
+        !settingsToUse.password
+      ) {
+        return null;
+      }
+
+      setIsLoadingIdentPreview(true);
+      try {
+        const config = createIdentConnectionConfig(settingsToUse);
+        const result = await fetchIdentPreview(config);
+        setIdentPreview(result);
+        return result;
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error
+            ? error.message
+            : 'Не удалось получить данные из модуля iDent.';
+        setIdentPreview({
+          counts: {},
+          errors: {
+            doctors: errorMessage,
+            branches: errorMessage,
+            schedule: errorMessage,
+            leads: errorMessage,
+            calls: errorMessage,
+          },
+        });
+        throw error;
+      } finally {
+        setIsLoadingIdentPreview(false);
+      }
+    },
+    [],
+  );
+
   const handleIdentEntityToggle = (key: IdentEntityKey, value: boolean) => {
-    setIdentForm((prev) => (prev ? { ...prev, [key]: value } : prev));
+    setIdentForm((prev) => ({ ...prev, [key]: value }));
   };
 
   const handleUserSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -580,15 +785,36 @@ export default function Settings() {
 
   const handleIdentSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!identForm) {
+
+    const trimmedHost = identForm.host.trim();
+    const trimmedPort = String(identForm.port ?? '').trim();
+    const trimmedUsername = identForm.username.trim();
+
+    setIdentForm((prev) => ({
+      ...prev,
+      host: trimmedHost,
+      port: trimmedPort,
+      username: trimmedUsername,
+    }));
+
+    if (!trimmedHost || !trimmedPort || !trimmedUsername || !identForm.password) {
+      const errorMessage = 'Укажите адрес сервера, порт, логин и пароль для подключения к iDent.';
+      setIdentBanner({ type: 'error', text: errorMessage });
+      appendIdentLog('error', errorMessage);
       return;
     }
 
     setIsSavingIdent(true);
     setIdentBanner(null);
+    appendIdentLog('info', 'Сохраняем настройки и пробуем подключиться к iDent.');
 
     try {
+      appendIdentLog('info', 'Отправляем настройки подключения в портал.');
       const updated = await updateIdentSettings({
+        host: trimmedHost,
+        port: trimmedPort,
+        username: trimmedUsername,
+        password: identForm.password,
         apiKey: identForm.apiKey,
         workspace: identForm.workspace,
         clinicId: identForm.clinicId,
@@ -600,42 +826,100 @@ export default function Settings() {
         syncSchedule: identForm.syncSchedule,
         syncLeads: identForm.syncLeads,
         syncCalls: identForm.syncCalls,
-        connected: true,
-        syncNow: true,
+        connected: false,
       });
       setIdentSettings(updated);
       setIdentForm(updated);
-      setIdentBanner({ type: 'success', text: 'Ident подключён и синхронизирован.' });
+
+      appendIdentLog('info', 'Проверяем соединение и предварительные данные.');
+      const preview = await loadIdentPreview({ ...updated, host: trimmedHost, port: trimmedPort, username: trimmedUsername });
+      if (preview) {
+        const summary = summarizeIdentPreview(preview);
+        appendIdentLog('success', summary ? `Соединение установлено. ${summary}` : 'Соединение установлено.');
+      }
+
+      appendIdentLog('info', 'Включаем синхронизацию iDent.');
+      const connectedState = await updateIdentSettings({ connected: true, syncNow: true });
+      setIdentSettings(connectedState);
+      setIdentForm(connectedState);
+      setIdentBanner({ type: 'success', text: 'iDent подключён и данные успешно получены.' });
+      appendIdentLog('success', 'Интеграция iDent активирована.');
     } catch (error) {
-      setIdentBanner({
-        type: 'error',
-        text:
-          error instanceof Error
-            ? error.message
-            : 'Не удалось подключить интеграцию Ident.',
-      });
+      const errorMessage =
+        error instanceof Error ? error.message : 'Не удалось подключить интеграцию iDent.';
+      setIdentBanner({ type: 'error', text: errorMessage });
+      appendIdentLog('error', errorMessage);
     } finally {
       setIsSavingIdent(false);
+    }
+  };
+
+  const handleIdentTestConnection = async () => {
+    const trimmedHost = identForm.host.trim();
+    const trimmedPort = String(identForm.port ?? '').trim();
+    const trimmedUsername = identForm.username.trim();
+
+    setIdentForm((prev) => ({
+      ...prev,
+      host: trimmedHost,
+      port: trimmedPort,
+      username: trimmedUsername,
+    }));
+
+    if (!trimmedHost || !trimmedPort || !trimmedUsername || !identForm.password) {
+      const errorMessage = 'Для проверки соединения заполните сервер, порт, логин и пароль.';
+      setIdentBanner({ type: 'error', text: errorMessage });
+      appendIdentLog('error', errorMessage);
+      return;
+    }
+
+    setIsTestingIdentConnection(true);
+    setIdentBanner(null);
+    appendIdentLog('info', 'Запускаем проверку соединения с iDent.');
+
+    try {
+      const preview = await loadIdentPreview({
+        ...identForm,
+        host: trimmedHost,
+        port: trimmedPort,
+        username: trimmedUsername,
+      });
+
+      if (preview) {
+        const summary = summarizeIdentPreview(preview);
+        appendIdentLog('success', summary ? `Соединение проверено. ${summary}` : 'Соединение проверено успешно.');
+      } else {
+        appendIdentLog('success', 'Соединение проверено успешно.');
+      }
+
+      setIdentBanner({ type: 'success', text: 'Соединение с iDent установлено.' });
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Не удалось выполнить проверку соединения iDent.';
+      setIdentBanner({ type: 'error', text: errorMessage });
+      appendIdentLog('error', errorMessage);
+    } finally {
+      setIsTestingIdentConnection(false);
     }
   };
 
   const handleIdentDisconnect = async () => {
     setIsSavingIdent(true);
     setIdentBanner(null);
+    appendIdentLog('info', 'Отключаем интеграцию iDent.');
 
     try {
       const updated = await updateIdentSettings({ connected: false });
       setIdentSettings(updated);
       setIdentForm(updated);
+      setIdentPreview(null);
       setIdentBanner({ type: 'success', text: 'Интеграция Ident отключена.' });
+      appendIdentLog('success', 'Интеграция iDent отключена.');
     } catch (error) {
-      setIdentBanner({
-        type: 'error',
-        text:
-          error instanceof Error
-            ? error.message
-            : 'Не удалось отключить интеграцию Ident.',
-      });
+      const errorMessage =
+        error instanceof Error ? error.message : 'Не удалось отключить интеграцию Ident.';
+      setIdentBanner({ type: 'error', text: errorMessage });
+      appendIdentLog('error', errorMessage);
     } finally {
       setIsSavingIdent(false);
     }
@@ -961,6 +1245,58 @@ export default function Settings() {
         >
           <div className="grid gap-4 md:grid-cols-2">
             <label className="space-y-1 text-sm">
+              <span className="font-medium text-page/70">Сервер (IP или домен)</span>
+              <input
+                required
+                value={identForm?.host ?? ''}
+                onChange={(event) => handleIdentFormChange('host', event.target.value)}
+                placeholder="178.249.243.150"
+                autoComplete="off"
+                className="w-full rounded-lg border border-page/50 bg-white px-4 py-3 text-sm shadow-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+              />
+            </label>
+
+            <label className="space-y-1 text-sm">
+              <span className="font-medium text-page/70">Порт</span>
+              <input
+                required
+                value={identForm?.port ?? ''}
+                onChange={(event) => handleIdentFormChange('port', event.target.value)}
+                placeholder="15015"
+                inputMode="numeric"
+                autoComplete="off"
+                className="w-full rounded-lg border border-page/50 bg-white px-4 py-3 text-sm shadow-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+              />
+            </label>
+
+            <label className="space-y-1 text-sm">
+              <span className="font-medium text-page/70">Логин</span>
+              <input
+                required
+                value={identForm?.username ?? ''}
+                onChange={(event) => handleIdentFormChange('username', event.target.value)}
+                placeholder="integration-user"
+                autoComplete="username"
+                className="w-full rounded-lg border border-page/50 bg-white px-4 py-3 text-sm shadow-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+              />
+            </label>
+
+            <label className="space-y-1 text-sm">
+              <span className="font-medium text-page/70">Пароль</span>
+              <input
+                required
+                type="password"
+                value={identForm?.password ?? ''}
+                onChange={(event) => handleIdentFormChange('password', event.target.value)}
+                placeholder="Введите пароль"
+                autoComplete="current-password"
+                className="w-full rounded-lg border border-page/50 bg-white px-4 py-3 text-sm shadow-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+              />
+            </label>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="space-y-1 text-sm">
               <span className="font-medium text-page/70">API ключ</span>
               <input
                 required
@@ -1146,9 +1482,22 @@ export default function Settings() {
 
           <div className="flex flex-wrap gap-3">
             <button
+              type="button"
+              onClick={handleIdentTestConnection}
+              className="flex items-center gap-2 rounded-lg border border-emerald-300 px-5 py-3 text-sm font-semibold text-emerald-600 transition hover:border-emerald-400 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={isSavingIdent || isTestingIdentConnection}
+            >
+              {isTestingIdentConnection ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <ShieldCheck className="h-4 w-4" />
+              )}
+              Проверка соединения
+            </button>
+            <button
               type="submit"
               className="flex items-center gap-2 rounded-lg bg-gradient-to-r from-emerald-500 to-teal-500 px-5 py-3 text-sm font-semibold text-white shadow-lg transition hover:from-emerald-600 hover:to-teal-600 disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={isSavingIdent}
+              disabled={isSavingIdent || isTestingIdentConnection}
             >
               {isSavingIdent ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
               Сохранить и подключить
@@ -1158,7 +1507,7 @@ export default function Settings() {
                 type="button"
                 onClick={handleIdentDisconnect}
                 className="rounded-lg border border-emerald-300 px-5 py-3 text-sm font-semibold text-emerald-600 transition hover:border-emerald-400 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
-                disabled={isSavingIdent}
+                disabled={isSavingIdent || isTestingIdentConnection}
               >
                 Отключить интеграцию
               </button>
@@ -1177,6 +1526,13 @@ export default function Settings() {
                 {identSettings?.connected ? 'активно' : 'не подключено'}
               </span>
             </p>
+            <p>
+              Сервер:{' '}
+              {identSettings?.host
+                ? `${identSettings.host}${identSettings.port ? `:${identSettings.port}` : ''}`
+                : 'не указан'}
+            </p>
+            <p>Логин: {identSettings?.username || 'не указан'}</p>
             <p>Workspace: {identSettings?.workspace || 'не указан'}</p>
             <p>ID клиники: {identSettings?.clinicId || 'не указан'}</p>
             <p>
@@ -1208,6 +1564,69 @@ export default function Settings() {
                 </li>
               )}
             </ul>
+          </div>
+          <div>
+            <h4 className="text-xs font-semibold uppercase tracking-wide text-page/50">Статистика API iDent</h4>
+            {isLoadingIdentPreview ? (
+              <p className="mt-2 text-xs text-page/50">Запрашиваем данные из модуля...</p>
+            ) : identPreview ? (
+              <ul className="mt-2 space-y-1 text-xs text-page/70">
+                {(Object.keys(IDENT_PREVIEW_LABELS) as IdentConnectionResource[]).map((resource) => {
+                  const label = IDENT_PREVIEW_LABELS[resource];
+                  const count = identPreview.counts[resource];
+                  const error = identPreview.errors[resource];
+                  return (
+                    <li key={resource} className="flex items-center justify-between gap-3">
+                      <span className="flex items-center gap-2">
+                        <span
+                          className={`h-2 w-2 rounded-full ${
+                            error ? 'bg-red-400' : count !== null && count !== undefined ? 'bg-emerald-500' : 'bg-page/40'
+                          }`}
+                        />
+                        <span>{label}</span>
+                      </span>
+                      <span className={`text-xs ${error ? 'text-red-500' : 'text-page/60'}`}>
+                        {error ? error : typeof count === 'number' ? `${count}` : 'нет данных'}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <p className="mt-2 text-xs text-page/50">
+                Сохраните настройки и выполните синхронизацию, чтобы увидеть статистику.
+              </p>
+            )}
+          </div>
+          <div>
+            <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-page/50">
+              <span>Журнал подключения</span>
+              {identLogEntries.length ? (
+                <button
+                  type="button"
+                  onClick={clearIdentLog}
+                  className="text-[11px] font-semibold text-emerald-600 transition hover:text-emerald-700"
+                >
+                  Очистить
+                </button>
+              ) : null}
+            </div>
+            <div className="mt-2 max-h-48 space-y-1 overflow-y-auto rounded-lg border border-page/40 bg-page/5 px-3 py-2 text-[11px] leading-relaxed text-page/70">
+              {identLogEntries.length ? (
+                identLogEntries.map((entry) => (
+                  <div key={entry.id} className={`flex items-start gap-2 ${IDENT_LOG_COLORS[entry.level]}`}>
+                    <span className="mt-[1px] shrink-0 font-mono text-[10px] text-page/40">
+                      {formatLogTimestamp(entry.timestamp)}
+                    </span>
+                    <span>{entry.message}</span>
+                  </div>
+                ))
+              ) : (
+                <p className="text-xs text-page/50">
+                  Лог пока пуст. Выполните проверку соединения или сохраните настройки.
+                </p>
+              )}
+            </div>
           </div>
           <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-xs text-emerald-700">
             После подключения портал автоматически подтянет расписание, сотрудников и обращения из iDent.
