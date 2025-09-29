@@ -38,10 +38,19 @@ export interface IdentIntegrationSettings {
   lastSync?: string;
 }
 
+export interface IdentLogEntry {
+  id: string;
+  timestamp: string;
+  source: string;
+  message: string;
+  level?: 'info' | 'warn' | 'error';
+}
+
 interface IntegrationSettingsState {
   userExtensions: Record<string, { phone?: string; telegramHandle?: string }>;
   telegram: TelegramIntegrationSettings;
   ident: IdentIntegrationSettings;
+  identLogs: IdentLogEntry[];
 }
 
 const STORAGE_KEY = 'dental-portal-integration-settings';
@@ -69,6 +78,7 @@ const defaultState: IntegrationSettingsState = {
     connected: false,
     lastSync: undefined,
   },
+  identLogs: [],
 };
 
 let cachedState: IntegrationSettingsState | null = null;
@@ -90,7 +100,52 @@ const cloneState = (state: IntegrationSettingsState): IntegrationSettingsState =
   userExtensions: { ...state.userExtensions },
   telegram: { ...state.telegram },
   ident: { ...state.ident },
+  identLogs: [...state.identLogs],
 });
+
+const normalizeLogLevel = (level: unknown): IdentLogEntry['level'] | undefined => {
+  if (level === 'info' || level === 'warn' || level === 'error') {
+    return level;
+  }
+  return undefined;
+};
+
+const sanitizeIdentLogs = (logs: unknown): IdentLogEntry[] => {
+  if (!Array.isArray(logs)) {
+    return [];
+  }
+
+  return logs
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object') {
+        return null;
+      }
+
+      const { id, timestamp, source, message, level } = entry as Partial<IdentLogEntry> & Record<string, unknown>;
+
+      if (
+        typeof id !== 'string' ||
+        !id.trim() ||
+        typeof timestamp !== 'string' ||
+        !timestamp.trim() ||
+        typeof source !== 'string' ||
+        !source.trim() ||
+        typeof message !== 'string' ||
+        !message.trim()
+      ) {
+        return null;
+      }
+
+      return {
+        id: id.trim(),
+        timestamp,
+        source: source.trim(),
+        message: message.trim(),
+        level: normalizeLogLevel(level),
+      } satisfies IdentLogEntry;
+    })
+    .filter((entry): entry is IdentLogEntry => Boolean(entry));
+};
 
 const loadState = (): IntegrationSettingsState => {
   const storage = getStorage();
@@ -127,6 +182,7 @@ const loadState = (): IntegrationSettingsState => {
         password:
           typeof parsed.ident?.password === 'string' ? parsed.ident.password : defaultState.ident.password,
       },
+      identLogs: sanitizeIdentLogs(parsed.identLogs),
     } satisfies IntegrationSettingsState;
   } catch (error) {
     console.error('Не удалось загрузить настройки интеграции', error);
@@ -373,6 +429,17 @@ export const updateTelegramSettings = async (
 export const fetchIdentSettings = async (): Promise<IdentIntegrationSettings> => {
   const state = readState();
   return { ...state.ident };
+};
+
+export const fetchIdentLogs = async (): Promise<IdentLogEntry[]> => {
+  const state = readState();
+  return [...state.identLogs].sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+};
+
+export const clearIdentLogs = async (): Promise<void> => {
+  updateState((state) => {
+    state.identLogs = [];
+  });
 };
 
 export interface UpdateIdentSettingsPayload {

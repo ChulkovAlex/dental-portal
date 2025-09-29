@@ -9,18 +9,22 @@ import {
   Smartphone,
   UserCog,
   UsersRound,
+  ScrollText,
 } from 'lucide-react';
 
 import PortalHeader from '../components/PortalHeader';
 import { useAuth } from '../context/AuthContext';
 import {
+  clearIdentLogs,
   createPortalUser,
+  fetchIdentLogs,
   fetchIdentSettings,
   fetchPortalUsers,
   fetchTelegramSettings,
   fetchUserProfile,
   type IdentAutoSyncInterval,
   type IdentIntegrationSettings,
+  type IdentLogEntry,
   type IntegrationUserProfile,
   type PortalRole,
   type TelegramIntegrationSettings,
@@ -35,13 +39,14 @@ import {
   type IdentPreviewResult,
 } from '../services/identApi';
 
-type MenuSection = 'users' | 'telegram' | 'ident';
+type MenuSection = 'users' | 'telegram' | 'ident' | 'identLog';
 
 interface MenuItem {
   id: MenuSection;
   label: string;
   description: string;
   icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
+  group?: 'main' | 'connection';
 }
 
 type SelectedUser = number | 'new' | null;
@@ -62,18 +67,28 @@ const MENU_ITEMS: MenuItem[] = [
     label: 'Пользователи',
     description: 'Управление профилями и правами',
     icon: UsersRound,
+    group: 'main',
   },
   {
     id: 'telegram',
     label: 'Телеграм',
     description: 'Уведомления и синхронизация',
     icon: Bot,
+    group: 'main',
   },
   {
     id: 'ident',
     label: 'Ident',
     description: 'Интеграция с системой идентификации',
     icon: Link2,
+    group: 'connection',
+  },
+  {
+    id: 'identLog',
+    label: 'Лог',
+    description: 'Ошибки подключения',
+    icon: ScrollText,
+    group: 'connection',
   },
 ];
 
@@ -210,6 +225,20 @@ export default function Settings() {
   const [isSavingIdent, setIsSavingIdent] = useState(false);
   const [identPreview, setIdentPreview] = useState<IdentPreviewResult | null>(null);
   const [isLoadingIdentPreview, setIsLoadingIdentPreview] = useState(false);
+  const [identLogs, setIdentLogs] = useState<IdentLogEntry[]>([]);
+  const [isLoadingIdentLogs, setIsLoadingIdentLogs] = useState(false);
+  const [isClearingIdentLogs, setIsClearingIdentLogs] = useState(false);
+
+  const updateIdentLogs = useCallback(async () => {
+    try {
+      const logs = await fetchIdentLogs();
+      setIdentLogs(logs);
+      return logs;
+    } catch (error) {
+      console.error('Не удалось получить журнал интеграции iDent', error);
+      throw error;
+    }
+  }, [fetchIdentLogs]);
 
   const refreshSelfProfile = useCallback(async () => {
     if (!currentUser?.id) {
@@ -278,13 +307,41 @@ export default function Settings() {
             calls: errorMessage,
           },
         });
+        try {
+          await updateIdentLogs();
+        } catch (logError) {
+          console.error('Не удалось обновить журнал после ошибки iDent', logError);
+        }
         throw error;
       } finally {
         setIsLoadingIdentPreview(false);
       }
     },
-    [],
+    [updateIdentLogs],
   );
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    const preloadLogs = async () => {
+      try {
+        const logs = await fetchIdentLogs();
+        if (!isCancelled) {
+          setIdentLogs(logs);
+        }
+      } catch (error) {
+        if (!isCancelled) {
+          console.error('Не удалось предварительно загрузить журнал iDent', error);
+        }
+      }
+    };
+
+    void preloadLogs();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [fetchIdentLogs]);
 
   useEffect(() => {
     if (!currentUser?.id) {
@@ -428,6 +485,38 @@ export default function Settings() {
   ]);
 
   useEffect(() => {
+    if (selectedSection !== 'identLog') {
+      return;
+    }
+
+    let isCancelled = false;
+    setIsLoadingIdentLogs(true);
+
+    const load = async () => {
+      try {
+        const logs = await fetchIdentLogs();
+        if (!isCancelled) {
+          setIdentLogs(logs);
+        }
+      } catch (error) {
+        if (!isCancelled) {
+          console.error('Не удалось загрузить журнал интеграции iDent', error);
+        }
+      } finally {
+        if (!isCancelled) {
+          setIsLoadingIdentLogs(false);
+        }
+      }
+    };
+
+    void load();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [fetchIdentLogs, selectedSection]);
+
+  useEffect(() => {
     if (isAdmin) {
       if (selectedUserId === 'new') {
         setUserForm(createEmptyUserForm());
@@ -508,6 +597,32 @@ export default function Settings() {
 
     return IDENT_ENTITY_OPTIONS.filter((option) => identSettings[option.key]).map((option) => option.label);
   }, [identSettings]);
+
+  const identLogMeta = useMemo(() => {
+    if (!identLogs.length) {
+      return 'нет записей';
+    }
+
+    if (identLogs.length === 1) {
+      return '1 запись';
+    }
+
+    if (identLogs.length < 5) {
+      return `${identLogs.length} записи`;
+    }
+
+    return `${identLogs.length} записей`;
+  }, [identLogs.length]);
+
+  const menuMetaMap = useMemo<Record<MenuSection, string>>(
+    () => ({
+      users: userMeta,
+      telegram: telegramMeta,
+      ident: identMeta,
+      identLog: identLogMeta,
+    }),
+    [identLogMeta, identMeta, telegramMeta, userMeta],
+  );
 
   const handleUserFormChange = <K extends keyof UserFormState>(key: K, value: UserFormState[K]) => {
     setUserForm((prev) => ({ ...prev, [key]: value }));
@@ -726,6 +841,18 @@ export default function Settings() {
       });
     } finally {
       setIsSavingIdent(false);
+    }
+  };
+
+  const handleClearIdentLogs = async () => {
+    setIsClearingIdentLogs(true);
+    try {
+      await clearIdentLogs();
+      await updateIdentLogs();
+    } catch (error) {
+      console.error('Не удалось очистить журнал интеграции iDent', error);
+    } finally {
+      setIsClearingIdentLogs(false);
     }
   };
 
@@ -1301,9 +1428,93 @@ export default function Settings() {
             )}
           </div>
           <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-xs text-emerald-700">
-            После подключения портал автоматически подтянет расписание, сотрудников и обращения из iDent.
+            <p>
+              После подключения портал автоматически подтянет расписание, сотрудников и обращения из iDent.
+            </p>
+            <button
+              type="button"
+              onClick={() => setSelectedSection('identLog')}
+              className="mt-3 inline-flex items-center gap-2 rounded-full border border-emerald-300 bg-white/60 px-3 py-1 text-xs font-semibold text-emerald-600 transition hover:border-emerald-400 hover:bg-white"
+            >
+              <ScrollText className="h-3.5 w-3.5" /> Перейти к логам
+            </button>
           </div>
         </div>
+      </div>
+    </section>
+  );
+
+  const renderIdentLogSection = () => (
+    <section className="space-y-6">
+      <div className="flex items-start gap-3">
+        <div className="rounded-full bg-emerald-100 p-3 text-emerald-600">
+          <ScrollText className="h-5 w-5" />
+        </div>
+        <div>
+          <h2 className="text-xl font-semibold">Журнал подключения iDent</h2>
+          <p className="text-sm text-page/60">
+            Отслеживайте ошибки и служебные события, которые возникают во время синхронизации с iDent.
+          </p>
+        </div>
+      </div>
+
+      <div className="space-y-4 rounded-2xl border border-page bg-card p-6 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-page/80">Последние записи</h3>
+            <p className="text-xs text-page/50">
+              Здесь отображаются события, зафиксированные модулем интеграции.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleClearIdentLogs}
+            className="inline-flex items-center gap-2 rounded-lg border border-emerald-300 px-4 py-2 text-xs font-semibold text-emerald-700 transition hover:border-emerald-400 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={isClearingIdentLogs || !identLogs.length}
+          >
+            {isClearingIdentLogs ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+            Очистить журнал
+          </button>
+        </div>
+
+        {isLoadingIdentLogs ? (
+          <p className="rounded-xl border border-dashed border-page/40 bg-card/60 px-4 py-6 text-center text-sm text-page/60">
+            Загружаем журнал событий...
+          </p>
+        ) : identLogs.length ? (
+          <div className="space-y-3">
+            {identLogs.map((log) => (
+              <article key={log.id} className="rounded-xl border border-page/40 bg-white p-4 text-sm shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-page/50">
+                  <span>{formatDateTime(log.timestamp)}</span>
+                  <span className="font-medium text-page/60">{log.source}</span>
+                </div>
+                <p className="mt-2 text-sm text-page/80">{log.message}</p>
+                {log.level ? (
+                  <span
+                    className={`mt-3 inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${
+                      log.level === 'error'
+                        ? 'bg-red-50 text-red-600'
+                        : log.level === 'warn'
+                        ? 'bg-amber-50 text-amber-600'
+                        : 'bg-emerald-50 text-emerald-600'
+                    }`}
+                  >
+                    {log.level === 'error'
+                      ? 'Ошибка'
+                      : log.level === 'warn'
+                      ? 'Предупреждение'
+                      : 'Информация'}
+                  </span>
+                ) : null}
+              </article>
+            ))}
+          </div>
+        ) : (
+          <p className="rounded-xl border border-dashed border-page/40 bg-card/60 px-4 py-6 text-center text-sm text-page/50">
+            Пока нет записей в журнале.
+          </p>
+        )}
       </div>
     </section>
   );
@@ -1312,6 +1523,8 @@ export default function Settings() {
     switch (selectedSection) {
       case 'telegram':
         return renderTelegramSection();
+      case 'identLog':
+        return renderIdentLogSection();
       case 'ident':
         return renderIdentSection();
       case 'users':
@@ -1329,46 +1542,79 @@ export default function Settings() {
 
       <main className="mx-auto flex max-w-6xl flex-col gap-8 px-4 py-10 lg:flex-row">
         <aside className="lg:w-72">
-          <nav className="space-y-2 rounded-2xl border border-page bg-card p-3 shadow-sm">
-            {MENU_ITEMS.map((item) => {
-              const isActive = selectedSection === item.id;
-              const meta =
-                item.id === 'users'
-                  ? userMeta
-                  : item.id === 'telegram'
-                  ? telegramMeta
-                  : identMeta;
+          <nav className="space-y-4 rounded-2xl border border-page bg-card p-3 shadow-sm">
+            <div className="space-y-2">
+              {MENU_ITEMS.filter((item) => item.group !== 'connection').map((item) => {
+                const isActive = selectedSection === item.id;
+                const Icon = item.icon;
+                const meta = menuMetaMap[item.id];
 
-              const Icon = item.icon;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setSelectedSection(item.id)}
+                    className={`flex w-full items-center justify-between gap-3 rounded-xl border px-4 py-3 text-left transition ${
+                      isActive
+                        ? 'border-orange-300 bg-orange-50 text-orange-700 shadow-sm'
+                        : 'border-transparent hover:border-orange-200 hover:bg-orange-50/60'
+                    }`}
+                  >
+                    <span className="flex items-start gap-3">
+                      <span
+                        className={`rounded-full p-2 ${
+                          isActive ? 'bg-orange-100 text-orange-500' : 'bg-page/10 text-page/60'
+                        }`}
+                      >
+                        <Icon className="h-4 w-4" />
+                      </span>
+                      <span>
+                        <span className="block text-sm font-semibold">{item.label}</span>
+                        <span className="block text-xs text-page/60">{item.description}</span>
+                      </span>
+                    </span>
+                    <span className="text-xs font-medium uppercase tracking-wide text-page/50">{meta}</span>
+                  </button>
+                );
+              })}
+            </div>
 
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => setSelectedSection(item.id)}
-                  className={`flex w-full items-center justify-between gap-3 rounded-xl border px-4 py-3 text-left transition ${
-                    isActive
-                      ? 'border-orange-300 bg-orange-50 text-orange-700 shadow-sm'
-                      : 'border-transparent hover:border-orange-200 hover:bg-orange-50/60'
-                  }`}
-                >
-                  <span className="flex items-start gap-3">
-                    <span
-                      className={`rounded-full p-2 ${
-                        isActive ? 'bg-orange-100 text-orange-500' : 'bg-page/10 text-page/60'
-                      }`}
-                    >
-                      <Icon className="h-4 w-4" />
+            <div className="space-y-2 border-t border-page/20 pt-3">
+              <p className="px-2 text-xs font-semibold uppercase tracking-wide text-page/40">Подключение</p>
+              {MENU_ITEMS.filter((item) => item.group === 'connection').map((item) => {
+                const isActive = selectedSection === item.id;
+                const Icon = item.icon;
+                const meta = menuMetaMap[item.id];
+
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setSelectedSection(item.id)}
+                    className={`flex w-full items-center justify-between gap-3 rounded-xl border px-4 py-3 text-left transition ${
+                      isActive
+                        ? 'border-emerald-300 bg-emerald-50 text-emerald-700 shadow-sm'
+                        : 'border-transparent hover:border-emerald-200 hover:bg-emerald-50/60'
+                    }`}
+                  >
+                    <span className="flex items-start gap-3">
+                      <span
+                        className={`rounded-full p-2 ${
+                          isActive ? 'bg-emerald-100 text-emerald-500' : 'bg-page/10 text-page/60'
+                        }`}
+                      >
+                        <Icon className="h-4 w-4" />
+                      </span>
+                      <span>
+                        <span className="block text-sm font-semibold">{item.label}</span>
+                        <span className="block text-xs text-page/60">{item.description}</span>
+                      </span>
                     </span>
-                    <span>
-                      <span className="block text-sm font-semibold">{item.label}</span>
-                      <span className="block text-xs text-page/60">{item.description}</span>
-                    </span>
-                  </span>
-                  <span className="text-xs font-medium uppercase tracking-wide text-page/50">{meta}</span>
-                </button>
-              );
-            })}
+                    <span className="text-xs font-medium uppercase tracking-wide text-page/50">{meta}</span>
+                  </button>
+                );
+              })}
+            </div>
           </nav>
         </aside>
 
