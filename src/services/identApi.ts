@@ -59,9 +59,21 @@ export const createIdentConnectionConfig = (
   password: settings.password,
 });
 
+const resolveProtocolAndHost = (rawHost: string) => {
+  const trimmedHost = rawHost.trim();
+  const protocolMatch = trimmedHost.match(/^(https?):\/\//i);
+  const protocol = protocolMatch ? `${protocolMatch[1].toLowerCase()}://` : 'http://';
+  const hostWithoutProtocol = protocolMatch
+    ? trimmedHost.slice(protocolMatch[0].length)
+    : trimmedHost;
+  const sanitizedHost = hostWithoutProtocol.replace(/^\/+/, '').replace(/\/+$/, '');
+
+  return { protocol, sanitizedHost };
+};
+
 const buildBaseUrl = ({ host, port }: IdentConnectionConfig) => {
   const trimmedHost = host.trim();
-  const sanitizedHost = trimmedHost.replace(/^https?:\/\//i, '');
+  const { protocol, sanitizedHost } = resolveProtocolAndHost(trimmedHost);
   const trimmedPort = typeof port === 'number' ? String(Math.trunc(port)) : port?.trim?.();
   const sanitizedPort = trimmedPort ? trimmedPort.replace(/^:/, '') : undefined;
   if (!sanitizedHost) {
@@ -69,10 +81,10 @@ const buildBaseUrl = ({ host, port }: IdentConnectionConfig) => {
   }
 
   if (sanitizedPort) {
-    return `http://${sanitizedHost}:${sanitizedPort}`;
+    return `${protocol}${sanitizedHost}:${sanitizedPort}`;
   }
 
-  return `http://${sanitizedHost}`;
+  return `${protocol}${sanitizedHost}`;
 };
 
 export async function callIdentApi<T>(
@@ -82,13 +94,19 @@ export async function callIdentApi<T>(
 ): Promise<T> {
   const timestamp = new Date().toISOString();
   const fallbackSource = (() => {
-    const host = config.host?.trim() || '(host не указан)';
+    const rawHost = config.host?.trim();
+    const host = rawHost || '(host не указан)';
     const port =
       typeof config.port === 'number'
         ? String(Math.trunc(config.port))
         : config.port?.toString().trim() || '';
     const normalizedPath = ensureLeadingSlash(path);
-    const prefix = host.startsWith('http') ? host : `http://${host}`;
+    if (!rawHost) {
+      return `${host}${port ? `:${port}` : ''}${normalizedPath}`;
+    }
+
+    const { protocol, sanitizedHost } = resolveProtocolAndHost(rawHost);
+    const prefix = sanitizedHost ? `${protocol}${sanitizedHost}` : rawHost;
     return `${prefix}${port ? `:${port}` : ''}${normalizedPath}`;
   })();
 
