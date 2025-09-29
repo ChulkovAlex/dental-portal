@@ -1,4 +1,4 @@
-import type { IdentIntegrationSettings } from './integrationModule';
+import { appendIdentLog, type IdentIntegrationSettings } from './integrationModule';
 
 export type IdentConnectionResource = 'doctors' | 'branches' | 'schedule' | 'leads' | 'calls';
 
@@ -80,37 +80,57 @@ export async function callIdentApi<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
-  const baseUrl = buildBaseUrl(config);
-  const url = new URL(ensureLeadingSlash(path), baseUrl);
+  const timestamp = new Date().toISOString();
+  const fallbackSource = (() => {
+    const host = config.host?.trim() || '(host не указан)';
+    const port =
+      typeof config.port === 'number'
+        ? String(Math.trunc(config.port))
+        : config.port?.toString().trim() || '';
+    const normalizedPath = ensureLeadingSlash(path);
+    const prefix = host.startsWith('http') ? host : `http://${host}`;
+    return `${prefix}${port ? `:${port}` : ''}${normalizedPath}`;
+  })();
 
-  const headers = new Headers(init?.headers);
-  headers.set('Authorization', `Basic ${encodeBasicAuth(config.username, config.password)}`);
-  headers.set('Accept', 'application/json');
+  let resolvedSource = fallbackSource;
 
-  const response = await fetch(url.toString(), {
-    ...init,
-    headers,
-    credentials: 'omit',
-  });
-
-  if (!response.ok) {
-    const text = await response.text().catch(() => '');
-    throw new Error(
-      `iDent API вернул ошибку ${response.status}. ${text ? `Ответ сервера: ${text}` : 'Тело ответа пустое.'}`,
-    );
-  }
-
-  const contentType = response.headers.get('content-type');
-  if (contentType && contentType.includes('application/json')) {
-    return (await response.json()) as T;
-  }
-
-  // Попытка разобрать даже без корректного заголовка
-  const fallback = await response.text();
   try {
-    return JSON.parse(fallback) as T;
+    const baseUrl = buildBaseUrl(config);
+    resolvedSource = new URL(ensureLeadingSlash(path), baseUrl).toString();
+
+    const headers = new Headers(init?.headers);
+    headers.set('Authorization', `Basic ${encodeBasicAuth(config.username, config.password)}`);
+    headers.set('Accept', 'application/json');
+
+    const response = await fetch(resolvedSource, {
+      ...init,
+      headers,
+      credentials: 'omit',
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(
+        `iDent API вернул ошибку ${response.status}. ${text ? `Ответ сервера: ${text}` : 'Тело ответа пустое.'}`,
+      );
+    }
+
+    const contentType = response.headers.get('content-type');
+    if (contentType && contentType.includes('application/json')) {
+      return (await response.json()) as T;
+    }
+
+    // Попытка разобрать даже без корректного заголовка
+    const fallback = await response.text();
+    try {
+      return JSON.parse(fallback) as T;
+    } catch (error) {
+      throw new Error('Сервер вернул данные в неизвестном формате.');
+    }
   } catch (error) {
-    throw new Error('Сервер вернул данные в неизвестном формате.');
+    const message = error instanceof Error ? error.message : String(error);
+    void appendIdentLog({ timestamp, source: resolvedSource, message });
+    throw error;
   }
 }
 
@@ -152,6 +172,13 @@ export async function fetchIdentPreview(
         console.error(`Ошибка загрузки ресурса ${resource} из iDent`, error);
         errors[resource] =
           error instanceof Error ? error.message : 'Неизвестная ошибка при обращении к API iDent';
+        const message =
+          error instanceof Error ? error.message : 'Неизвестная ошибка при обращении к API iDent';
+        void appendIdentLog({
+          timestamp: new Date().toISOString(),
+          source: `${resource}:${path}`,
+          message,
+        });
       }
     }),
   );
