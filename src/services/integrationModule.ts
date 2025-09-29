@@ -13,6 +13,12 @@ export interface IntegrationUserProfile {
   telegramHandle?: string;
 }
 
+export interface IdentLogEntry {
+  timestamp: string;
+  source: string;
+  message: string;
+}
+
 export interface TelegramIntegrationSettings {
   token: string;
   channel: string;
@@ -42,9 +48,11 @@ interface IntegrationSettingsState {
   userExtensions: Record<string, { phone?: string; telegramHandle?: string }>;
   telegram: TelegramIntegrationSettings;
   ident: IdentIntegrationSettings;
+  identLogs: IdentLogEntry[];
 }
 
 const STORAGE_KEY = 'dental-portal-integration-settings';
+const MAX_IDENT_LOG_ENTRIES = 100;
 
 const defaultState: IntegrationSettingsState = {
   userExtensions: {},
@@ -69,6 +77,7 @@ const defaultState: IntegrationSettingsState = {
     connected: false,
     lastSync: undefined,
   },
+  identLogs: [],
 };
 
 let cachedState: IntegrationSettingsState | null = null;
@@ -90,7 +99,28 @@ const cloneState = (state: IntegrationSettingsState): IntegrationSettingsState =
   userExtensions: { ...state.userExtensions },
   telegram: { ...state.telegram },
   ident: { ...state.ident },
+  identLogs: state.identLogs.map((entry) => ({ ...entry })),
 });
+
+const sanitizeIdentLogEntry = (entry: unknown): IdentLogEntry | null => {
+  if (!entry || typeof entry !== 'object') {
+    return null;
+  }
+
+  const candidate = entry as Partial<Record<keyof IdentLogEntry, unknown>>;
+  const timestamp = typeof candidate.timestamp === 'string' && candidate.timestamp ? candidate.timestamp : null;
+  const source = typeof candidate.source === 'string' && candidate.source ? candidate.source : null;
+  const message = typeof candidate.message === 'string' && candidate.message ? candidate.message : null;
+
+  if (!timestamp || !source || !message) {
+    return null;
+  }
+
+  return { timestamp, source, message } satisfies IdentLogEntry;
+};
+
+const enforceLogLimit = (entries: IdentLogEntry[]): IdentLogEntry[] =>
+  entries.slice(-MAX_IDENT_LOG_ENTRIES).map((entry) => ({ ...entry }));
 
 const loadState = (): IntegrationSettingsState => {
   const storage = getStorage();
@@ -108,6 +138,12 @@ const loadState = (): IntegrationSettingsState => {
     if (!parsed || typeof parsed !== 'object') {
       return cloneState(defaultState);
     }
+
+    const identLogs = Array.isArray(parsed.identLogs)
+      ? parsed.identLogs
+          .map((entry) => sanitizeIdentLogEntry(entry))
+          .filter((entry): entry is IdentLogEntry => Boolean(entry))
+      : [];
 
     return {
       userExtensions: typeof parsed.userExtensions === 'object' && parsed.userExtensions
@@ -127,6 +163,7 @@ const loadState = (): IntegrationSettingsState => {
         password:
           typeof parsed.ident?.password === 'string' ? parsed.ident.password : defaultState.ident.password,
       },
+      identLogs: enforceLogLimit(identLogs),
     } satisfies IntegrationSettingsState;
   } catch (error) {
     console.error('Не удалось загрузить настройки интеграции', error);
@@ -135,14 +172,19 @@ const loadState = (): IntegrationSettingsState => {
 };
 
 const writeState = (state: IntegrationSettingsState) => {
-  cachedState = cloneState(state);
+  const normalized: IntegrationSettingsState = {
+    ...state,
+    identLogs: enforceLogLimit(state.identLogs),
+  };
+
+  cachedState = cloneState(normalized);
   const storage = getStorage();
   if (!storage) {
     return;
   }
 
   try {
-    storage.setItem(STORAGE_KEY, JSON.stringify(state));
+    storage.setItem(STORAGE_KEY, JSON.stringify(normalized));
   } catch (error) {
     console.error('Не удалось сохранить настройки интеграции', error);
   }
@@ -461,4 +503,34 @@ export const updateIdentSettings = async (
   });
 
   return { ...next.ident };
+};
+
+export const fetchIdentLogs = async (): Promise<IdentLogEntry[]> => {
+  const state = readState();
+  return state.identLogs.map((entry) => ({ ...entry }));
+};
+
+const sanitizeLogInput = (entry: IdentLogEntry): IdentLogEntry => {
+  const timestamp = typeof entry.timestamp === 'string' && entry.timestamp ? entry.timestamp : new Date().toISOString();
+  const source = entry.source ? String(entry.source).trim() : 'unknown';
+  const message = entry.message ? String(entry.message).trim() : 'Неизвестная ошибка';
+
+  return {
+    timestamp,
+    source,
+    message,
+  } satisfies IdentLogEntry;
+};
+
+export const appendIdentLog = async (entry: IdentLogEntry): Promise<void> => {
+  const normalized = sanitizeLogInput(entry);
+  updateState((state) => {
+    state.identLogs = enforceLogLimit([...state.identLogs, normalized]);
+  });
+};
+
+export const clearIdentLogs = async (): Promise<void> => {
+  updateState((state) => {
+    state.identLogs = [];
+  });
 };

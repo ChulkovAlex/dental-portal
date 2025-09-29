@@ -19,6 +19,7 @@ import {
   fetchPortalUsers,
   fetchTelegramSettings,
   fetchUserProfile,
+  appendIdentLog,
   type IdentAutoSyncInterval,
   type IdentIntegrationSettings,
   type IntegrationUserProfile,
@@ -693,6 +694,11 @@ export default function Settings() {
       setIdentSettings(connectedState);
       setIdentForm(connectedState);
       setIdentBanner({ type: 'success', text: 'iDent подключён и данные успешно получены.' });
+      void appendIdentLog({
+        timestamp: new Date().toISOString(),
+        source: `ident:sync:${trimmedHost}${trimmedPort ? `:${trimmedPort}` : ''}`,
+        message: 'Успешное подключение к iDent и синхронизация данных.',
+      });
     } catch (error) {
       setIdentBanner({
         type: 'error',
