@@ -71,3 +71,28 @@ export default tseslint.config([
 deploy test 2026-03-24 22:29:49
 deploy retry 2026-03-24 22:33:52
 deploy retry 2026-03-24 22:36:19
+
+## Backend security API
+
+Added Flask security module for server-side user management:
+
+- User database is stored in SQLite file: `portal/data/users.db`.
+- Admin credentials are stored in separate server file: `portal/data/admin_credentials.json`.
+- Admin API auth uses headers: `X-Admin-Login` and `X-Admin-Password`.
+
+Endpoints:
+
+- `POST /api/security/admin/login`
+- `PUT /api/security/admin/credentials`
+- `GET /api/security/users`
+- `POST /api/security/users`
+- `PUT /api/security/users/<id>`
+- `DELETE /api/security/users/<id>`
+
+You can override default paths and initial admin credentials via env vars:
+
+- `SECURITY_DATA_DIR`
+- `USERS_DB_PATH`
+- `ADMIN_CREDENTIALS_PATH`
+- `ADMIN_LOGIN`
+- `ADMIN_PASSWORD`
