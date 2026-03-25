@@ -625,6 +625,7 @@ export const updateDoctorConfirmationSettings = async (
 export interface SendNextcloudMessagePayload {
   dateLabel: string;
   pendingCount: number;
+  messageOverride?: string;
 }
 
 export const sendNextcloudTalkBotMessage = async (
@@ -641,9 +642,11 @@ export const sendNextcloudTalkBotMessage = async (
     settings.roomToken,
   )}`;
 
-  const formattedMessage = settings.messageTemplate
-    .replaceAll('{date}', payload.dateLabel)
-    .replaceAll('{pending}', String(payload.pendingCount));
+  const formattedMessage = payload.messageOverride?.trim()
+    ? payload.messageOverride.trim()
+    : settings.messageTemplate
+      .replaceAll('{date}', payload.dateLabel)
+      .replaceAll('{pending}', String(payload.pendingCount));
 
   const response = await fetch(requestUrl, {
     method: 'POST',
