@@ -7,6 +7,7 @@ import { AuthProvider } from './context/AuthContext';
 import { RegistrationProvider } from './context/RegistrationContext';
 import Approve from './pages/Approve';
 import Dashboard from './pages/Dashboard';
+import Schedule from './pages/Schedule';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Reject from './pages/Reject';
@@ -24,6 +25,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             <Route path="/register" element={<Register />} />
             <Route element={<ProtectedRoute />}>
               <Route path="/dashboard" element={<Dashboard />} />
+              <Route path="/schedule" element={<Schedule />} />
               <Route path="/approve" element={<Approve />} />
               <Route path="/reject" element={<Reject />} />
               <Route path="/doctor-confirmation-settings" element={<DoctorConfirmationSettingsPage />} />

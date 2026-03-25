@@ -81,13 +81,14 @@ export default function CalendarView() {
   };
 
   const doctorMap = useMemo(() => new Map(doctors.map((doctor) => [doctor.id, doctor])), [doctors]);
+  const mobileCurrentMonthCells = cells.filter((cell) => cell.inCurrentMonth);
 
   return (
     <section className="space-y-6">
-      <div className="rounded-3xl border border-slate-200 bg-white/80 p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900/60">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+      <div className="rounded-3xl border border-slate-200 bg-white/80 p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/60 md:p-6">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
-            <h2 className="text-2xl font-semibold text-slate-900 dark:text-white">Месячный обзор</h2>
+            <h2 className="text-xl font-semibold text-slate-900 dark:text-white md:text-2xl">Месячный обзор</h2>
             <p className="text-sm text-slate-500 dark:text-slate-300">
               {formatDateHuman(formatDateKey(viewDate), { month: 'long', year: 'numeric' })}
             </p>
@@ -96,15 +97,15 @@ export default function CalendarView() {
             <button
               type="button"
               onClick={() => shiftMonth(-1)}
-              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 shadow-sm transition hover:border-orange-200 hover:text-orange-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 shadow-sm transition hover:border-orange-200 hover:text-orange-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 md:text-sm"
             >
               <ChevronLeft className="h-4 w-4" />
-              Предыдущий месяц
+              Предыдущий
             </button>
             <button
               type="button"
               onClick={selectToday}
-              className="inline-flex items-center gap-2 rounded-2xl border border-orange-200 bg-orange-50 px-3 py-2 text-sm font-semibold text-orange-700 transition hover:border-orange-300 hover:bg-orange-100 dark:border-orange-500/40 dark:bg-orange-500/20 dark:text-orange-100"
+              className="inline-flex items-center gap-2 rounded-2xl border border-orange-200 bg-orange-50 px-3 py-2 text-xs font-semibold text-orange-700 transition hover:border-orange-300 hover:bg-orange-100 dark:border-orange-500/40 dark:bg-orange-500/20 dark:text-orange-100 md:text-sm"
             >
               <Calendar className="h-4 w-4" />
               Сегодня
@@ -112,15 +113,15 @@ export default function CalendarView() {
             <button
               type="button"
               onClick={() => shiftMonth(1)}
-              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 shadow-sm transition hover:border-orange-200 hover:text-orange-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 shadow-sm transition hover:border-orange-200 hover:text-orange-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 md:text-sm"
             >
-              Следующий месяц
+              Следующий
               <ChevronRight className="h-4 w-4" />
             </button>
           </div>
         </div>
 
-        <div className="mt-6 overflow-hidden rounded-3xl border border-slate-200 dark:border-slate-700">
+        <div className="mt-5 hidden overflow-hidden rounded-3xl border border-slate-200 md:block dark:border-slate-700">
           <div className="grid grid-cols-7 bg-slate-50 py-2 text-center text-xs font-semibold uppercase tracking-wide text-slate-500 dark:bg-slate-900/80 dark:text-slate-400">
             {weekdayLabels.map((label) => (
               <span key={label}>{label}</span>
@@ -168,12 +169,37 @@ export default function CalendarView() {
             })}
           </div>
         </div>
+
+        <div className="mt-4 space-y-2 md:hidden">
+          {mobileCurrentMonthCells.map((cell) => {
+            const isSelected = cell.key === selectedDate;
+            const isToday = cell.key === formatDateKey(today);
+
+            return (
+              <button
+                key={`mobile-${monthKey}-${cell.key}`}
+                type="button"
+                onClick={() => setSelectedDate(cell.key)}
+                className={`w-full rounded-2xl border px-4 py-3 text-left ${
+                  isSelected ? 'border-orange-400 bg-orange-50/70 dark:bg-orange-500/10' : 'border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className={`text-sm font-semibold ${isToday ? 'text-orange-600 dark:text-orange-300' : 'text-slate-700 dark:text-slate-200'}`}>
+                    {formatDateHuman(cell.key, { day: 'numeric', month: 'long' })}
+                  </span>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">{cell.appointments.length} визитов</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      <div className="rounded-3xl border border-slate-200 bg-white/80 p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900/60">
+      <div className="rounded-3xl border border-slate-200 bg-white/80 p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/60 md:p-6">
         <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div>
-            <h3 className="text-lg font-semibold text-slate-900 dark:text-white">
+            <h3 className="text-base font-semibold text-slate-900 dark:text-white md:text-lg">
               {formatDateHuman(selectedDate, { day: 'numeric', month: 'long', year: 'numeric' })}
             </h3>
             <p className="text-sm text-slate-500 dark:text-slate-300">
@@ -182,7 +208,7 @@ export default function CalendarView() {
           </div>
         </div>
 
-        <div className="mt-5 grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+        <div className="mt-5 grid gap-4 md:gap-6 md:grid-cols-2 xl:grid-cols-3">
           {Array.from(appointmentsByRoom.entries()).map(([room, list]) => (
             <div
               key={room}
@@ -241,4 +267,3 @@ export default function CalendarView() {
     </section>
   );
 }
-
