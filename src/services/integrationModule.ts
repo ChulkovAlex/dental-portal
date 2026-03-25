@@ -44,10 +44,27 @@ export interface IdentIntegrationSettings {
   lastSync?: string;
 }
 
+export type ScheduleConfirmationMode = 'manual' | 'automatic' | 'hybrid';
+
+export interface DoctorConfirmationSettings {
+  mode: ScheduleConfirmationMode;
+  autoReminders: boolean;
+  reminderHoursBefore: number;
+  requireDoctorCommentOnReject: boolean;
+  approvalGraceMinutes: number;
+  nextcloudUrl: string;
+  botToken: string;
+  roomToken: string;
+  messageTemplate: string;
+  connected: boolean;
+  lastMessageAt?: string;
+}
+
 interface IntegrationSettingsState {
   userExtensions: Record<string, { phone?: string; telegramHandle?: string }>;
   telegram: TelegramIntegrationSettings;
   ident: IdentIntegrationSettings;
+  doctorConfirmation: DoctorConfirmationSettings;
   identLogs: IdentLogEntry[];
 }
 
@@ -77,6 +94,20 @@ const defaultState: IntegrationSettingsState = {
     connected: false,
     lastSync: undefined,
   },
+  doctorConfirmation: {
+    mode: 'hybrid',
+    autoReminders: true,
+    reminderHoursBefore: 24,
+    requireDoctorCommentOnReject: true,
+    approvalGraceMinutes: 45,
+    nextcloudUrl: '',
+    botToken: '',
+    roomToken: '',
+    messageTemplate:
+      'Напоминание: подтвердите расписание на {date}. Неподтверждённых приёмов: {pending}.',
+    connected: false,
+    lastMessageAt: undefined,
+  },
   identLogs: [],
 };
 
@@ -99,6 +130,7 @@ const cloneState = (state: IntegrationSettingsState): IntegrationSettingsState =
   userExtensions: { ...state.userExtensions },
   telegram: { ...state.telegram },
   ident: { ...state.ident },
+  doctorConfirmation: { ...state.doctorConfirmation },
   identLogs: state.identLogs.map((entry) => ({ ...entry })),
 });
 
@@ -162,6 +194,10 @@ const loadState = (): IntegrationSettingsState => {
           typeof parsed.ident?.username === 'string' ? parsed.ident.username : defaultState.ident.username,
         password:
           typeof parsed.ident?.password === 'string' ? parsed.ident.password : defaultState.ident.password,
+      },
+      doctorConfirmation: {
+        ...defaultState.doctorConfirmation,
+        ...(parsed.doctorConfirmation ?? {}),
       },
       identLogs: enforceLogLimit(identLogs),
     } satisfies IntegrationSettingsState;
@@ -508,6 +544,129 @@ export const updateIdentSettings = async (
 export const fetchIdentLogs = async (): Promise<IdentLogEntry[]> => {
   const state = readState();
   return state.identLogs.map((entry) => ({ ...entry }));
+};
+
+export const fetchDoctorConfirmationSettings = async (): Promise<DoctorConfirmationSettings> => {
+  const state = readState();
+  return { ...state.doctorConfirmation };
+};
+
+export interface UpdateDoctorConfirmationSettingsPayload {
+  mode?: ScheduleConfirmationMode;
+  autoReminders?: boolean;
+  reminderHoursBefore?: number;
+  requireDoctorCommentOnReject?: boolean;
+  approvalGraceMinutes?: number;
+  nextcloudUrl?: string;
+  botToken?: string;
+  roomToken?: string;
+  messageTemplate?: string;
+  connected?: boolean;
+}
+
+export const updateDoctorConfirmationSettings = async (
+  updates: UpdateDoctorConfirmationSettingsPayload,
+): Promise<DoctorConfirmationSettings> => {
+  const next = updateState((state) => {
+    const settings = { ...state.doctorConfirmation };
+
+    if (typeof updates.mode === 'string') {
+      const allowed: ScheduleConfirmationMode[] = ['manual', 'automatic', 'hybrid'];
+      if (allowed.includes(updates.mode as ScheduleConfirmationMode)) {
+        settings.mode = updates.mode as ScheduleConfirmationMode;
+      }
+    }
+
+    if (typeof updates.autoReminders === 'boolean') {
+      settings.autoReminders = updates.autoReminders;
+    }
+
+    if (typeof updates.reminderHoursBefore === 'number' && Number.isFinite(updates.reminderHoursBefore)) {
+      settings.reminderHoursBefore = Math.max(1, Math.min(168, Math.round(updates.reminderHoursBefore)));
+    }
+
+    if (typeof updates.requireDoctorCommentOnReject === 'boolean') {
+      settings.requireDoctorCommentOnReject = updates.requireDoctorCommentOnReject;
+    }
+
+    if (typeof updates.approvalGraceMinutes === 'number' && Number.isFinite(updates.approvalGraceMinutes)) {
+      settings.approvalGraceMinutes = Math.max(5, Math.min(720, Math.round(updates.approvalGraceMinutes)));
+    }
+
+    if (typeof updates.nextcloudUrl === 'string') {
+      settings.nextcloudUrl = updates.nextcloudUrl.trim();
+    }
+
+    if (typeof updates.botToken === 'string') {
+      settings.botToken = updates.botToken.trim();
+    }
+
+    if (typeof updates.roomToken === 'string') {
+      settings.roomToken = updates.roomToken.trim();
+    }
+
+    if (typeof updates.messageTemplate === 'string') {
+      settings.messageTemplate = updates.messageTemplate.trim();
+    }
+
+    if (typeof updates.connected === 'boolean') {
+      settings.connected = updates.connected;
+    } else {
+      settings.connected = Boolean(settings.nextcloudUrl && settings.botToken && settings.roomToken);
+    }
+
+    state.doctorConfirmation = settings;
+    return state;
+  });
+
+  return { ...next.doctorConfirmation };
+};
+
+export interface SendNextcloudMessagePayload {
+  dateLabel: string;
+  pendingCount: number;
+}
+
+export const sendNextcloudTalkBotMessage = async (
+  payload: SendNextcloudMessagePayload,
+): Promise<{ sentAt: string; requestUrl?: string }> => {
+  const settings = await fetchDoctorConfirmationSettings();
+
+  if (!settings.nextcloudUrl || !settings.botToken || !settings.roomToken) {
+    throw new Error('Заполните URL Nextcloud, Bot Token и Room Token перед отправкой.');
+  }
+
+  const baseUrl = settings.nextcloudUrl.replace(/\/+$/, '');
+  const requestUrl = `${baseUrl}/ocs/v2.php/apps/spreed/api/v1/chat/${encodeURIComponent(
+    settings.roomToken,
+  )}`;
+
+  const formattedMessage = settings.messageTemplate
+    .replaceAll('{date}', payload.dateLabel)
+    .replaceAll('{pending}', String(payload.pendingCount));
+
+  const response = await fetch(requestUrl, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${settings.botToken}`,
+      'Content-Type': 'application/json',
+      'OCS-APIRequest': 'true',
+    },
+    body: JSON.stringify({ message: formattedMessage }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Nextcloud Talk вернул ошибку ${response.status}: ${errorText || 'пустой ответ'}`);
+  }
+
+  const sentAt = new Date().toISOString();
+  updateState((state) => {
+    state.doctorConfirmation.lastMessageAt = sentAt;
+    state.doctorConfirmation.connected = true;
+  });
+
+  return { sentAt, requestUrl };
 };
 
 const sanitizeLogInput = (entry: IdentLogEntry): IdentLogEntry => {
