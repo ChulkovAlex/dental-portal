@@ -1,5 +1,5 @@
 import React from 'react';
-import { LogOut, Moon, Sun, UsersRound, ClipboardCheck, Ban, Settings2, CalendarCheck2 } from 'lucide-react';
+import { LogOut, Moon, Sun, UsersRound, ClipboardCheck, Ban, Settings2, CalendarCheck2, CalendarRange } from 'lucide-react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 
 import { useDark } from '../hooks/useDark';
@@ -12,6 +12,7 @@ interface PortalHeaderProps {
 
 const navItems = [
   { to: '/dashboard', label: 'Дашборд', icon: UsersRound },
+  { to: '/schedule', label: 'Расписание', icon: CalendarRange },
   { to: '/approve', label: 'Заявки', icon: ClipboardCheck },
   { to: '/reject', label: 'Отказы', icon: Ban },
   { to: '/doctor-confirmation-settings', label: 'Подтв. расписания', icon: CalendarCheck2 },
@@ -34,9 +35,9 @@ export default function PortalHeader({ title, subtitle }: PortalHeaderProps) {
 
   return (
     <header className="sticky top-0 z-20 border-b border-page bg-card/80 backdrop-blur-lg shadow-sm">
-      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
+      <div className="mx-auto flex min-h-16 max-w-7xl items-center justify-between gap-3 px-4 py-2 sm:px-6 lg:px-8">
         <div>
-          <h1 className="text-lg font-semibold text-page sm:text-xl">{title}</h1>
+          <h1 className="text-base font-semibold text-page sm:text-lg lg:text-xl">{title}</h1>
           {subtitle ? (
             <p className="hidden text-xs text-page/60 sm:block">{subtitle}</p>
           ) : null}
@@ -89,9 +90,9 @@ export default function PortalHeader({ title, subtitle }: PortalHeaderProps) {
         </div>
       </div>
 
-      <div className="flex items-center justify-between border-t border-page/60 px-4 py-2 md:hidden">
-        <div className="text-xs text-page/70">{currentUser?.name ?? currentUser?.email}</div>
-        <div className="flex items-center gap-1">
+      <div className="border-t border-page/60 px-2 py-2 md:hidden">
+        <div className="mb-2 px-2 text-[11px] text-page/70">{currentUser?.name ?? currentUser?.email}</div>
+        <div className="flex items-center gap-1 overflow-x-auto pb-1">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = location.pathname === item.to;
@@ -99,20 +100,20 @@ export default function PortalHeader({ title, subtitle }: PortalHeaderProps) {
               <NavLink
                 key={item.to}
                 to={item.to}
-                className={`${
+                className={`shrink-0 ${
                   isActive
                     ? 'bg-gradient-to-r from-orange-500 to-yellow-500 text-white'
                     : 'border border-page text-page'
-                } flex items-center gap-1 rounded-full px-3 py-1 text-xs`}
+                } flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-medium`}
               >
-                <Icon className="h-3 w-3" />
+                <Icon className="h-3.5 w-3.5" />
                 {item.label}
               </NavLink>
             );
           })}
           <button
             onClick={handleLogout}
-            className="rounded-full border border-page px-3 py-1 text-xs text-page"
+            className="shrink-0 rounded-full border border-page px-3 py-1.5 text-xs text-page"
             type="button"
           >
             Выйти

@@ -1,10 +1,8 @@
 import React from 'react';
-import { CalendarDays, CheckCircle2, PhoneCall, Users } from 'lucide-react';
+import { CheckCircle2, PhoneCall, Users } from 'lucide-react';
 
 import DoctorConfirmationPanel from '../components/DoctorConfirmationPanel';
-import ScheduleTable from '../components/ScheduleTable';
 import VoiceAssistantPanel from '../components/VoiceAssistantPanel';
-import CalendarView from '../components/CalendarView';
 import { ScheduleProvider, useSchedule } from '../context/ScheduleContext';
 import PortalHeader from '../components/PortalHeader';
 import { formatDateKey } from '../utils/date';
@@ -29,19 +27,13 @@ function DashboardContent() {
 
   const cards = [
     {
-      title: 'Приёмы сегодня',
-      value: todaysAppointments.length ? `${todaysAppointments.length}` : 'Нет записей',
-      icon: <CalendarDays />,
-      color: 'from-orange-400 to-amber-400',
-    },
-    {
       title: 'Врачи в графике',
       value: `${doctors.length} специалистов`,
       icon: <Users />,
       color: 'from-sky-400 to-indigo-400',
     },
     {
-      title: 'Подтверждены',
+      title: 'Подтверждены сегодня',
       value: `${confirmedToday}/${todaysAppointments.length || 0}`,
       icon: <CheckCircle2 />,
       color: 'from-emerald-400 to-green-500',
@@ -58,23 +50,23 @@ function DashboardContent() {
     <div className="min-h-screen bg-page text-page">
       <PortalHeader
         title="Клиника доктора Денисенко"
-        subtitle="Управление расписанием, персоналом и коммуникациями"
+        subtitle="Дашборд с ключевыми метриками и операционными панелями"
       />
 
-      <main className="mx-auto max-w-7xl space-y-8 px-4 py-10">
-        <div className="rounded-2xl bg-gradient-to-r from-orange-400 to-yellow-400 p-8 text-white shadow-xl">
-          <h2 className="text-3xl font-bold">Добро пожаловать, Администратор!</h2>
-          <p className="mt-2 max-w-2xl text-sm text-white/80">
-            Единый центр управления расписанием, подтверждениями докторов и работой голосового ассистента.
-            Следите за статусами приёмов и мгновенно обновляйте информацию для команды.
+      <main className="mx-auto max-w-7xl space-y-8 px-4 py-8 md:py-10">
+        <div className="rounded-2xl bg-gradient-to-r from-orange-400 to-yellow-400 p-6 text-white shadow-xl md:p-8">
+          <h2 className="text-2xl font-bold md:text-3xl">Добро пожаловать, Администратор!</h2>
+          <p className="mt-2 max-w-2xl text-sm text-white/85">
+            Расписание вынесено в отдельную вкладку. Здесь оставили только ключевые показатели,
+            подтверждения докторов и задачи голосового ассистента.
           </p>
         </div>
 
-        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 md:gap-6">
           {cards.map((card) => (
             <div
               key={card.title}
-              className="rounded-2xl border border-page bg-card p-6 shadow-lg transition-all hover:-translate-y-1 hover:shadow-2xl"
+              className="rounded-2xl border border-page bg-card p-5 shadow-lg transition-all hover:-translate-y-1 hover:shadow-2xl"
             >
               <div className={`mb-4 inline-flex rounded-full bg-gradient-to-r ${card.color} p-3 text-white`}>
                 {React.cloneElement(card.icon, { className: 'h-6 w-6' })}
@@ -85,10 +77,8 @@ function DashboardContent() {
           ))}
         </div>
 
-        <ScheduleTable />
         <DoctorConfirmationPanel />
         <VoiceAssistantPanel />
-        <CalendarView />
       </main>
     </div>
   );
