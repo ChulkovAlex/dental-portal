@@ -18,16 +18,20 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 TALK_DB_PATH = Path(os.environ.get("TALK_DB_PATH", DATA_DIR / "talk.db"))
 
+RECOMMENDED_PORTAL_CALLBACK_URL = "https://portal.docdenisenko.ru/api/talk/schedule-response"
+
 DEFAULT_BOT_SERVICE_BASE_URL = os.environ.get(
     "BOT_SERVICE_BASE_URL", "http://127.0.0.1:18081"
 ).rstrip("/")
-DEFAULT_NEXTCLOUD_BASE_URL = os.environ.get("NEXTCLOUD_BASE_URL", "").rstrip("/")
-DEFAULT_NEXTCLOUD_SERVICE_USER = os.environ.get("NEXTCLOUD_SERVICE_USER", "")
+DEFAULT_NEXTCLOUD_BASE_URL = os.environ.get("NEXTCLOUD_BASE_URL", "http://127.0.0.1:8080").rstrip("/")
+DEFAULT_NEXTCLOUD_SERVICE_USER = os.environ.get("NEXTCLOUD_SERVICE_USER", "cloudadmin")
 DEFAULT_NEXTCLOUD_SERVICE_PASSWORD = os.environ.get("NEXTCLOUD_SERVICE_PASSWORD", "")
 DEFAULT_NEXTCLOUD_BOT_SECRET = os.environ.get("NEXTCLOUD_BOT_SECRET", "")
 DEFAULT_NEXTCLOUD_BOT_ID = os.environ.get("NEXTCLOUD_BOT_ID", "1")
 PORTAL_CALLBACK_BEARER = os.environ.get("PORTAL_CALLBACK_BEARER", "")
-DEFAULT_PORTAL_CALLBACK_URL = os.environ.get("PORTAL_CALLBACK_URL", "").strip()
+DEFAULT_PORTAL_CALLBACK_URL = (
+    os.environ.get("PORTAL_CALLBACK_URL", RECOMMENDED_PORTAL_CALLBACK_URL).strip()
+)
 
 
 def _utc_now() -> str:
@@ -123,6 +127,7 @@ def init_talk_storage() -> None:
         _ensure_column(conn, "doctors", "last_connection_check_at", "TEXT")
         _ensure_column(conn, "integration_settings", "portal_callback_url", "TEXT NOT NULL DEFAULT ''")
         _ensure_default_settings_row(conn)
+        _ensure_callback_url_not_loopback(conn)
         conn.commit()
 
 
@@ -157,6 +162,43 @@ def _ensure_default_settings_row(conn: sqlite3.Connection) -> None:
             now,
         ),
     )
+
+
+def _ensure_callback_url_not_loopback(conn: sqlite3.Connection) -> None:
+    row = conn.execute(
+        "SELECT portal_callback_url FROM integration_settings WHERE id = 1"
+    ).fetchone()
+    if row is None:
+        return
+    current = str(row["portal_callback_url"] or "")
+    normalized = _normalize_portal_callback_url(current)
+    if normalized == current:
+        return
+    conn.execute(
+        "UPDATE integration_settings SET portal_callback_url = ?, updated_at = ? WHERE id = 1",
+        (normalized, _utc_now()),
+    )
+
+
+def _is_loopback_url(url: str) -> bool:
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.hostname or ""
+    if host in {"127.0.0.1", "localhost"}:
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+        return ip.is_loopback
+    except ValueError:
+        return False
+
+
+def _normalize_portal_callback_url(url: str) -> str:
+    normalized = url.strip()
+    if not normalized:
+        return DEFAULT_PORTAL_CALLBACK_URL
+    if _is_loopback_url(normalized):
+        return RECOMMENDED_PORTAL_CALLBACK_URL
+    return normalized
 
 
 def list_doctors() -> list[dict[str, Any]]:
@@ -275,9 +317,9 @@ def update_integration_settings(payload: dict[str, Any]) -> dict[str, Any]:
         "bot_service_base_url": str(
             payload.get("botServiceBaseUrl", current["bot_service_base_url"])
         ).strip().rstrip("/"),
-        "portal_callback_url": str(
-            payload.get("portalCallbackUrl", current.get("portal_callback_url", ""))
-        ).strip(),
+        "portal_callback_url": _normalize_portal_callback_url(
+            str(payload.get("portalCallbackUrl", current.get("portal_callback_url", "")))
+        ),
     }
     now = _utc_now()
     with _db_connection() as conn:
@@ -561,7 +603,7 @@ def handle_schedule_response(payload: dict[str, Any]) -> dict[str, Any]:
     doctor_id = str(payload.get("doctorId", "")).strip()
     decision = str(payload.get("decision", "")).strip().lower()
 
-    if not schedule_id or not doctor_id or decision not in {"confirmed", "declined", "comment"}:
+    if not schedule_id or decision not in {"confirmed", "declined", "comment"}:
         raise ValueError("Некорректный payload callback")
 
     status = decision
@@ -576,7 +618,9 @@ def handle_schedule_response(payload: dict[str, Any]) -> dict[str, Any]:
         ).fetchone()
         if existing is None:
             raise LookupError("Запись schedule confirmation не найдена")
-        if existing["doctor_id"] != doctor_id:
+        stored_doctor_id = str(existing["doctor_id"])
+        effective_doctor_id = doctor_id or stored_doctor_id
+        if doctor_id and stored_doctor_id != doctor_id:
             raise LookupError("doctorId в callback не совпадает с записью schedule confirmation")
 
         conn.execute(
@@ -595,7 +639,7 @@ def handle_schedule_response(payload: dict[str, Any]) -> dict[str, Any]:
             """,
             (
                 schedule_id,
-                doctor_id,
+                effective_doctor_id,
                 decision,
                 comment,
                 actor,
@@ -754,16 +798,8 @@ def _verify_bot_schedule_request(bot_service_base: str) -> dict[str, Any]:
 def _verify_portal_callback(callback_url: str, callback_bearer: str) -> dict[str, Any]:
     if not callback_url:
         raise RuntimeError("Portal Callback URL не настроен")
-    parsed = urllib.parse.urlparse(callback_url)
-    host = parsed.hostname or ""
-    if host in {"127.0.0.1", "localhost"}:
+    if _is_loopback_url(callback_url):
         raise RuntimeError("Portal Callback URL указывает на loopback и недоступен из Docker-контейнера")
-    try:
-        ip = ipaddress.ip_address(host)
-        if ip.is_loopback:
-            raise RuntimeError("Portal Callback URL указывает на loopback и недоступен из Docker-контейнера")
-    except ValueError:
-        pass
 
     if not callback_bearer:
         raise RuntimeError("Nextcloud Bot Secret пустой: callback не пройдет авторизацию")
