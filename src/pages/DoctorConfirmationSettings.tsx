@@ -23,6 +23,7 @@ import {
 } from '../services/integrationModule';
 
 type Banner = { type: 'success' | 'error'; text: string } | null;
+type NextcloudUserPreview = { displayName: string; userId: string; groups: string[] } | null;
 
 const formatDateTime = (iso?: string) => (iso ? new Date(iso).toLocaleString('ru-RU') : '—');
 
@@ -32,6 +33,7 @@ export default function DoctorConfirmationSettingsPage() {
   const [banner, setBanner] = useState<Banner>(null);
   const [connectionBanner, setConnectionBanner] = useState<Banner>(null);
   const [syncBanner, setSyncBanner] = useState<Banner>(null);
+  const [nextcloudUserPreview, setNextcloudUserPreview] = useState<NextcloudUserPreview>(null);
   const [doctors, setDoctors] = useState<TalkDoctor[]>([]);
   const [syncLogs, setSyncLogs] = useState<Array<{ status: string; message: string; created_at: string }>>([]);
   const [excludeUsersInput, setExcludeUsersInput] = useState('talkbot');
@@ -94,11 +96,27 @@ export default function DoctorConfirmationSettingsPage() {
   const handleConnectionCheck = async () => {
     setIsCheckingConnection(true);
     setConnectionBanner(null);
+    setNextcloudUserPreview(null);
     try {
       const result = await checkNextcloudTalkConnection();
+      const credentialCheck = result.checks.find((item) => item.name === 'nextcloud_credentials');
+      const userDetails = (credentialCheck?.detail && typeof credentialCheck.detail === 'object'
+        ? credentialCheck.detail
+        : {}) as Record<string, unknown>;
+      const groupsRaw = userDetails.groups;
+      const groups = Array.isArray(groupsRaw)
+        ? groupsRaw.map((group) => String(group)).filter(Boolean)
+        : typeof groupsRaw === 'string' && groupsRaw
+          ? [groupsRaw]
+          : [];
+      setNextcloudUserPreview({
+        displayName: String(userDetails['display-name'] ?? userDetails.displayname ?? userDetails.id ?? '—'),
+        userId: String(userDetails.id ?? '—'),
+        groups,
+      });
       setConnectionBanner({
         type: result.ok ? 'success' : 'error',
-        text: result.ok ? 'Проверка соединения успешна.' : 'Проверка соединения завершилась с ошибками.',
+        text: result.ok ? 'Соединение успешно' : 'Проверка соединения завершилась с ошибками.',
       });
       await load();
     } catch (error) {
@@ -155,7 +173,7 @@ export default function DoctorConfirmationSettingsPage() {
           <div className="grid gap-4 lg:grid-cols-2">
             <label className="space-y-1 text-sm">
               <span>Nextcloud Base URL</span>
-              <input type="url" value={form?.nextcloudBaseUrl ?? ''} onChange={(event) => updateField('nextcloudBaseUrl', event.target.value)} className="input-field" placeholder="https://cloud.example.ru" />
+              <input type="url" value={form?.nextcloudBaseUrl ?? ''} onChange={(event) => updateField('nextcloudBaseUrl', event.target.value)} className="input-field" placeholder="https://cloud.docdenisenko.ru" />
             </label>
             <label className="space-y-1 text-sm">
               <span>Webhook/Base URL бота</span>
@@ -199,6 +217,14 @@ export default function DoctorConfirmationSettingsPage() {
             </button>
           </div>
           {connectionBanner ? <p className={`rounded-lg px-3 py-2 text-sm ${connectionBanner.type === 'success' ? 'bg-emerald-500/10 text-emerald-700' : 'bg-red-500/10 text-red-700'}`}>{connectionBanner.text}</p> : null}
+          {nextcloudUserPreview ? (
+            <div className="rounded-lg border border-emerald-300/60 bg-emerald-50/50 px-3 py-2 text-sm">
+              <p className="font-medium">Пользователь Nextcloud</p>
+              <p>display name: {nextcloudUserPreview.displayName || '—'}</p>
+              <p>user id: {nextcloudUserPreview.userId || '—'}</p>
+              <p>groups: {nextcloudUserPreview.groups.length ? nextcloudUserPreview.groups.join(', ') : '—'}</p>
+            </div>
+          ) : null}
         </form>
 
         <section className="space-y-3 rounded-2xl border border-page bg-card p-6 shadow-lg">
