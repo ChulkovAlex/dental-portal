@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+import urllib.error
+import urllib.parse
+import urllib.request
 from sqlite3 import IntegrityError
 
 from flask import Blueprint, jsonify, request
@@ -174,6 +178,49 @@ def request_schedule_confirmation_internal():
         return jsonify({"error": str(exc)}), 502
 
     return jsonify(result)
+
+
+@bp.post("/send-test-message")
+def send_test_message():
+    payload = request.get_json(silent=True) or {}
+    nextcloud_url = str(payload.get("nextcloudUrl", "")).strip().rstrip("/")
+    bot_token = str(payload.get("botToken", "")).strip()
+    room_token = str(payload.get("roomToken", "")).strip()
+    message = str(payload.get("message", "")).strip()
+
+    if not nextcloud_url or not bot_token or not room_token:
+        return jsonify({"error": "nextcloudUrl, botToken и roomToken обязательны"}), 400
+
+    if not message:
+        return jsonify({"error": "message обязателен"}), 400
+
+    request_url = (
+        f"{nextcloud_url}/ocs/v2.php/apps/spreed/api/v1/chat/"
+        f"{urllib.parse.quote(room_token, safe='')}"
+    )
+    outgoing = urllib.request.Request(
+        url=request_url,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {bot_token}",
+            "Content-Type": "application/json",
+            "OCS-APIRequest": "true",
+        },
+        data=json.dumps({"message": message}, ensure_ascii=False).encode("utf-8"),
+    )
+
+    try:
+        with urllib.request.urlopen(outgoing, timeout=30) as response:
+            raw_body = response.read().decode("utf-8")
+            return jsonify({"ok": True, "status": response.status, "response": raw_body})
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8")
+        return (
+            jsonify({"error": f"Nextcloud Talk вернул ошибку {exc.code}: {body or 'пустой ответ'}"}),
+            502,
+        )
+    except urllib.error.URLError as exc:
+        return jsonify({"error": f"Ошибка подключения к Nextcloud Talk: {exc.reason}"}), 502
 
 
 @bp.get("/schedule/confirmations")
