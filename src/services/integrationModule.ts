@@ -648,19 +648,24 @@ export const sendNextcloudTalkBotMessage = async (
       .replaceAll('{date}', payload.dateLabel)
       .replaceAll('{pending}', String(payload.pendingCount));
 
-  const response = await fetch(requestUrl, {
+  const proxyResponse = await fetch('/api/talk/send-test-message', {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${settings.botToken}`,
       'Content-Type': 'application/json',
-      'OCS-APIRequest': 'true',
     },
-    body: JSON.stringify({ message: formattedMessage }),
+    body: JSON.stringify({
+      nextcloudUrl: baseUrl,
+      botToken: settings.botToken,
+      roomToken: settings.roomToken,
+      message: formattedMessage,
+    }),
   });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Nextcloud Talk вернул ошибку ${response.status}: ${errorText || 'пустой ответ'}`);
+  if (!proxyResponse.ok) {
+    const proxyPayload = (await proxyResponse.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(
+      proxyPayload?.error || `Не удалось отправить сообщение через сервер (HTTP ${proxyResponse.status}).`,
+    );
   }
 
   const sentAt = new Date().toISOString();
