@@ -117,7 +117,7 @@ const defaultState: IntegrationSettingsState = {
     reminderHoursBefore: 24,
     requireDoctorCommentOnReject: true,
     approvalGraceMinutes: 45,
-    nextcloudBaseUrl: 'http://127.0.0.1:8080',
+    nextcloudBaseUrl: 'https://cloud.docdenisenko.ru',
     nextcloudServiceUser: 'cloudadmin',
     nextcloudServicePassword: '',
     nextcloudBotSecret: '',

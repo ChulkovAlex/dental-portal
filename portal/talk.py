@@ -9,6 +9,7 @@ import ipaddress
 import urllib.error
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -23,7 +24,7 @@ RECOMMENDED_PORTAL_CALLBACK_URL = "https://portal.docdenisenko.ru/api/talk/sched
 DEFAULT_BOT_SERVICE_BASE_URL = os.environ.get(
     "BOT_SERVICE_BASE_URL", "http://127.0.0.1:18081"
 ).rstrip("/")
-DEFAULT_NEXTCLOUD_BASE_URL = os.environ.get("NEXTCLOUD_BASE_URL", "http://127.0.0.1:8080").rstrip("/")
+DEFAULT_NEXTCLOUD_BASE_URL = os.environ.get("NEXTCLOUD_BASE_URL", "https://cloud.docdenisenko.ru").rstrip("/")
 DEFAULT_NEXTCLOUD_SERVICE_USER = os.environ.get("NEXTCLOUD_SERVICE_USER", "cloudadmin")
 DEFAULT_NEXTCLOUD_SERVICE_PASSWORD = os.environ.get("NEXTCLOUD_SERVICE_PASSWORD", "")
 DEFAULT_NEXTCLOUD_BOT_SECRET = os.environ.get("NEXTCLOUD_BOT_SECRET", "")
@@ -350,7 +351,7 @@ def _nc_request(
     settings: dict[str, Any],
     method: str = "GET",
     payload: dict[str, Any] | None = None,
-) -> dict[str, Any]:
+) -> Any:
     if not settings.get("nextcloud_base_url"):
         raise RuntimeError("Не настроен Nextcloud Base URL")
     if not settings.get("nextcloud_service_user") or not settings.get("nextcloud_service_password"):
@@ -358,10 +359,7 @@ def _nc_request(
 
     url = f"{settings['nextcloud_base_url']}{path}"
     data = None
-    headers: dict[str, str] = {
-        "Accept": "application/json",
-        "OCS-APIRequest": "true",
-    }
+    headers: dict[str, str] = {"Accept": "application/json, application/xml, text/xml", "OCS-APIRequest": "true"}
 
     if payload is not None:
         headers["Content-Type"] = "application/x-www-form-urlencoded"
@@ -376,6 +374,8 @@ def _nc_request(
 
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
+            status = response.status
+            content_type = response.headers.get("Content-Type", "")
             body = response.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8")
@@ -383,14 +383,72 @@ def _nc_request(
     except urllib.error.URLError as exc:
         raise RuntimeError(f"Ошибка подключения к Nextcloud: {exc.reason}") from exc
 
-    decoded = json.loads(body)
-    if "ocs" in decoded and decoded["ocs"].get("meta", {}).get("status") == "failure":
-        message = decoded["ocs"].get("meta", {}).get("message", "Неизвестная ошибка")
-        raise RuntimeError(f"Nextcloud вернул ошибку: {message}")
+    parsed = _parse_ocs_response(body=body, content_type=content_type)
 
-    if "ocs" in decoded:
-        return decoded["ocs"].get("data", {})
-    return decoded
+    if status != 200:
+        raise RuntimeError(f"Nextcloud вернул HTTP {status}")
+
+    if isinstance(parsed, dict) and "ocs" in parsed and isinstance(parsed["ocs"], dict):
+        meta = parsed["ocs"].get("meta")
+        if isinstance(meta, dict):
+            status_value = str(meta.get("status", "")).strip().lower()
+            if status_value in {"failure", "error", "failed"}:
+                message = str(meta.get("message") or "Неизвестная ошибка")
+                raise RuntimeError(f"Nextcloud вернул ошибку: {message}")
+        return parsed["ocs"].get("data", {})
+
+    return parsed
+
+
+def _xml_element_to_dict(element: ET.Element) -> Any:
+    children = list(element)
+    if not children:
+        return (element.text or "").strip()
+
+    grouped: dict[str, list[Any]] = {}
+    for child in children:
+        key = child.tag.split("}")[-1]
+        grouped.setdefault(key, []).append(_xml_element_to_dict(child))
+
+    if set(grouped.keys()) == {"element"}:
+        return grouped["element"]
+
+    result: dict[str, Any] = {}
+    for key, values in grouped.items():
+        result[key] = values[0] if len(values) == 1 else values
+    return result
+
+
+def _parse_ocs_xml(body: str) -> dict[str, Any]:
+    root = ET.fromstring(body)
+    root_tag = root.tag.split("}")[-1]
+    if root_tag != "ocs":
+        return {root_tag: _xml_element_to_dict(root)}
+
+    result: dict[str, Any] = {"ocs": {}}
+    for child in list(root):
+        key = child.tag.split("}")[-1]
+        result["ocs"][key] = _xml_element_to_dict(child)
+    return result
+
+
+def _parse_ocs_response(body: str, content_type: str) -> Any:
+    raw = body.strip()
+    if not raw:
+        return {}
+
+    normalized_content_type = content_type.lower()
+    is_xml = "xml" in normalized_content_type or raw.startswith("<")
+    if is_xml:
+        try:
+            return _parse_ocs_xml(raw)
+        except ET.ParseError as exc:
+            raise RuntimeError(f"Некорректный XML от Nextcloud: {exc}") from exc
+
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {"raw": raw}
 
 
 def _create_room(room_name: str, settings: dict[str, Any]) -> dict[str, Any]:
@@ -674,7 +732,7 @@ def run_connection_check() -> dict[str, Any]:
     callback_bearer = (settings.get("nextcloud_bot_secret") or "").strip()
 
     run_step("nextcloud_base_url", lambda: _http_request(f"{settings['nextcloud_base_url']}/status.php", method="GET"))
-    run_step("nextcloud_credentials", lambda: _nc_request("/ocs/v1.php/cloud/user", settings=settings))
+    run_step("nextcloud_credentials", lambda: _nc_request("/ocs/v2.php/cloud/user", settings=settings))
     run_step("talk_api", lambda: _nc_request("/ocs/v2.php/apps/spreed/api/v4/room", settings=settings))
     run_step("users_list", lambda: _fetch_nextcloud_users(settings))
     run_step("bot_service_base_url", lambda: _http_request(bot_service_base, method="GET"))
