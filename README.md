@@ -127,6 +127,7 @@ Added backend module for doctor directory and schedule confirmations via Nextclo
 - `NEXTCLOUD_BOT_NAME`
 - `NEXTCLOUD_BOT_SECRET`
 - `BOT_SERVICE_BASE_URL`
+- `PORTAL_CALLBACK_URL`
 - `PORTAL_CALLBACK_BEARER`
 
 ### Production notes (critical)
@@ -136,3 +137,11 @@ Added backend module for doctor directory and schedule confirmations via Nextclo
 - Use either:
   - an external portal URL (for example `https://portal.docdenisenko.ru/api/talk/schedule-response`), or
   - a dedicated service URL in the same Docker network.
+
+### Recommended URL matrix (single VDS, mixed host + Docker)
+
+- Browser → Portal UI/API: external URL (`https://portal.docdenisenko.ru`)
+- Portal backend → Nextcloud: host-local URL (`http://127.0.0.1:8080`) if both run on the same host.
+- Portal backend → Talk bot backend: host-local URL (`http://127.0.0.1:18081`) if bot backend is on host.
+- Bot backend (inside Docker) → Portal callback: external portal callback URL
+  (`https://portal.docdenisenko.ru/api/talk/schedule-response`) or an internal Docker-network URL.

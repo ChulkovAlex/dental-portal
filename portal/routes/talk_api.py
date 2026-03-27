@@ -186,6 +186,7 @@ def integration_settings_get():
             "nextcloudBotSecret": settings["nextcloud_bot_secret"],
             "nextcloudBotId": settings["nextcloud_bot_id"],
             "botServiceBaseUrl": settings["bot_service_base_url"],
+            "portalCallbackUrl": settings.get("portal_callback_url", ""),
             "connected": bool(settings["connected"]),
             "lastConnectionCheckAt": settings["last_connection_check_at"],
             "lastConnectionCheckResult": settings.get("last_connection_check_result"),
@@ -205,6 +206,7 @@ def integration_settings_put():
             "nextcloudBotSecret": settings["nextcloud_bot_secret"],
             "nextcloudBotId": settings["nextcloud_bot_id"],
             "botServiceBaseUrl": settings["bot_service_base_url"],
+            "portalCallbackUrl": settings.get("portal_callback_url", ""),
             "connected": bool(settings["connected"]),
             "lastConnectionCheckAt": settings["last_connection_check_at"],
             "lastConnectionCheckResult": settings.get("last_connection_check_result"),
@@ -328,6 +330,8 @@ def schedule_response():
         return jsonify({"error": "Unauthorized callback"}), 401
 
     payload = request.get_json(silent=True) or {}
+    if payload.get("type") == "connection_check":
+        return jsonify({"ok": True, "message": "Callback endpoint доступен", "receivedAt": payload.get("checkedAt")})
     try:
         updated = handle_schedule_response(payload)
     except ValueError as exc:

@@ -58,6 +58,7 @@ export interface DoctorConfirmationSettings {
   nextcloudBotSecret: string;
   nextcloudBotId: string;
   botServiceBaseUrl: string;
+  portalCallbackUrl: string;
   messageTemplate: string;
   connected: boolean;
   lastMessageAt?: string;
@@ -122,6 +123,7 @@ const defaultState: IntegrationSettingsState = {
     nextcloudBotSecret: '',
     nextcloudBotId: '',
     botServiceBaseUrl: 'http://127.0.0.1:18081',
+    portalCallbackUrl: '',
     messageTemplate:
       'Напоминание: подтвердите расписание на {date}. Неподтверждённых приёмов: {pending}.',
     connected: false,
@@ -598,6 +600,7 @@ export interface UpdateDoctorConfirmationSettingsPayload {
   nextcloudBotSecret?: string;
   nextcloudBotId?: string;
   botServiceBaseUrl?: string;
+  portalCallbackUrl?: string;
   messageTemplate?: string;
   connected?: boolean;
 }
@@ -653,6 +656,10 @@ export const updateDoctorConfirmationSettings = async (
 
     if (typeof updates.botServiceBaseUrl === 'string') {
       settings.botServiceBaseUrl = updates.botServiceBaseUrl.trim().replace(/\/+$/, '');
+    }
+
+    if (typeof updates.portalCallbackUrl === 'string') {
+      settings.portalCallbackUrl = updates.portalCallbackUrl.trim();
     }
 
     if (typeof updates.messageTemplate === 'string') {
