@@ -96,3 +96,31 @@ You can override default paths and initial admin credentials via env vars:
 - `ADMIN_CREDENTIALS_PATH`
 - `ADMIN_LOGIN`
 - `ADMIN_PASSWORD`
+
+## Nextcloud Talk schedule confirmation integration
+
+Added backend module for doctor directory and schedule confirmations via Nextcloud Talk bot.
+
+### New API endpoints
+
+- `GET /api/talk/doctors`
+- `POST /api/talk/doctors`
+- `POST /api/talk/doctors/<doctor_id>/room`
+- `POST /api/talk/schedule/request-confirmation`
+- `GET /api/talk/schedule/confirmations`
+- `POST /api/talk/schedule-response` (Bearer auth via `PORTAL_CALLBACK_BEARER`)
+
+### Database tables (SQLite `portal/data/talk.db` by default)
+
+- `doctors`
+- `schedule_confirmations`
+- `schedule_confirmation_events`
+
+### Env vars
+
+- `NEXTCLOUD_BASE_URL`
+- `NEXTCLOUD_BOT_ID`
+- `NEXTCLOUD_BOT_NAME`
+- `NEXTCLOUD_BOT_SECRET`
+- `BOT_SERVICE_BASE_URL`
+- `PORTAL_CALLBACK_BEARER`

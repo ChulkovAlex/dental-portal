@@ -2,6 +2,7 @@ from flask import Flask
 
 from portal.routes.ident_api import bp as ident_bp
 from portal.routes.security_api import bp as security_bp
+from portal.routes.talk_api import bp as talk_bp
 
 
 def create_app() -> Flask:
@@ -9,6 +10,7 @@ def create_app() -> Flask:
     app = Flask(__name__)
     app.register_blueprint(ident_bp)
     app.register_blueprint(security_bp)
+    app.register_blueprint(talk_bp)
     return app
 
 
