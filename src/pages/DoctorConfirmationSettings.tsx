@@ -80,6 +80,7 @@ export default function DoctorConfirmationSettingsPage() {
         nextcloudBotSecret: form.nextcloudBotSecret,
         nextcloudBotId: form.nextcloudBotId,
         botServiceBaseUrl: form.botServiceBaseUrl,
+        portalCallbackUrl: form.portalCallbackUrl,
         messageTemplate: form.messageTemplate,
       });
       setSettings(updated);
@@ -177,6 +178,19 @@ export default function DoctorConfirmationSettingsPage() {
             <label className="space-y-1 text-sm">
               <span>Nextcloud Bot ID</span>
               <input type="text" value={form?.nextcloudBotId ?? ''} onChange={(event) => updateField('nextcloudBotId', event.target.value)} className="input-field" />
+            </label>
+            <label className="space-y-1 text-sm lg:col-span-2">
+              <span>Portal Callback URL (для backend бота)</span>
+              <input
+                type="url"
+                value={form?.portalCallbackUrl ?? ''}
+                onChange={(event) => updateField('portalCallbackUrl', event.target.value)}
+                className="input-field"
+                placeholder="https://portal.docdenisenko.ru/api/talk/schedule-response"
+              />
+              <p className="text-xs text-page/60">
+                Не используйте localhost/127.0.0.1 для callback, если бот работает в Docker-контейнере.
+              </p>
             </label>
           </div>
           {banner ? <p className={`rounded-lg px-3 py-2 text-sm ${banner.type === 'success' ? 'bg-emerald-500/10 text-emerald-700' : 'bg-red-500/10 text-red-700'}`}>{banner.text}</p> : null}

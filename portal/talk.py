@@ -5,6 +5,7 @@ import os
 import sqlite3
 import uuid
 import base64
+import ipaddress
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -26,6 +27,7 @@ DEFAULT_NEXTCLOUD_SERVICE_PASSWORD = os.environ.get("NEXTCLOUD_SERVICE_PASSWORD"
 DEFAULT_NEXTCLOUD_BOT_SECRET = os.environ.get("NEXTCLOUD_BOT_SECRET", "")
 DEFAULT_NEXTCLOUD_BOT_ID = os.environ.get("NEXTCLOUD_BOT_ID", "1")
 PORTAL_CALLBACK_BEARER = os.environ.get("PORTAL_CALLBACK_BEARER", "")
+DEFAULT_PORTAL_CALLBACK_URL = os.environ.get("PORTAL_CALLBACK_URL", "").strip()
 
 
 def _utc_now() -> str:
@@ -98,6 +100,7 @@ def init_talk_storage() -> None:
                 nextcloud_bot_secret TEXT NOT NULL DEFAULT '',
                 nextcloud_bot_id TEXT NOT NULL DEFAULT '',
                 bot_service_base_url TEXT NOT NULL DEFAULT '',
+                portal_callback_url TEXT NOT NULL DEFAULT '',
                 connected INTEGER NOT NULL DEFAULT 0,
                 last_connection_check_at TEXT,
                 last_connection_check_result_json TEXT,
@@ -118,6 +121,7 @@ def init_talk_storage() -> None:
         )
         _ensure_column(conn, "doctors", "last_sync_at", "TEXT")
         _ensure_column(conn, "doctors", "last_connection_check_at", "TEXT")
+        _ensure_column(conn, "integration_settings", "portal_callback_url", "TEXT NOT NULL DEFAULT ''")
         _ensure_default_settings_row(conn)
         conn.commit()
 
@@ -138,9 +142,9 @@ def _ensure_default_settings_row(conn: sqlite3.Connection) -> None:
         """
         INSERT INTO integration_settings (
             id, nextcloud_base_url, nextcloud_service_user, nextcloud_service_password,
-            nextcloud_bot_secret, nextcloud_bot_id, bot_service_base_url, connected,
+            nextcloud_bot_secret, nextcloud_bot_id, bot_service_base_url, portal_callback_url, connected,
             last_connection_check_at, last_connection_check_result_json, updated_at
-        ) VALUES (1, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, ?)
+        ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, ?)
         """,
         (
             DEFAULT_NEXTCLOUD_BASE_URL,
@@ -149,6 +153,7 @@ def _ensure_default_settings_row(conn: sqlite3.Connection) -> None:
             DEFAULT_NEXTCLOUD_BOT_SECRET,
             DEFAULT_NEXTCLOUD_BOT_ID,
             DEFAULT_BOT_SERVICE_BASE_URL,
+            DEFAULT_PORTAL_CALLBACK_URL,
             now,
         ),
     )
@@ -270,6 +275,9 @@ def update_integration_settings(payload: dict[str, Any]) -> dict[str, Any]:
         "bot_service_base_url": str(
             payload.get("botServiceBaseUrl", current["bot_service_base_url"])
         ).strip().rstrip("/"),
+        "portal_callback_url": str(
+            payload.get("portalCallbackUrl", current.get("portal_callback_url", ""))
+        ).strip(),
     }
     now = _utc_now()
     with _db_connection() as conn:
@@ -277,7 +285,7 @@ def update_integration_settings(payload: dict[str, Any]) -> dict[str, Any]:
             """
             UPDATE integration_settings
             SET nextcloud_base_url = ?, nextcloud_service_user = ?, nextcloud_service_password = ?,
-                nextcloud_bot_secret = ?, nextcloud_bot_id = ?, bot_service_base_url = ?, updated_at = ?
+                nextcloud_bot_secret = ?, nextcloud_bot_id = ?, bot_service_base_url = ?, portal_callback_url = ?, updated_at = ?
             WHERE id = 1
             """,
             (
@@ -287,6 +295,7 @@ def update_integration_settings(payload: dict[str, Any]) -> dict[str, Any]:
                 next_values["nextcloud_bot_secret"],
                 next_values["nextcloud_bot_id"],
                 next_values["bot_service_base_url"] or DEFAULT_BOT_SERVICE_BASE_URL,
+                next_values["portal_callback_url"],
                 now,
             ),
         )
@@ -616,25 +625,23 @@ def run_connection_check() -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001
             checks.append({"name": name, "ok": False, "detail": str(exc)})
 
-    run_step("nextcloud_base_url", lambda: _nc_request("/ocs/v1.php/cloud/capabilities", settings=settings))
-    run_step("authorization", lambda: _nc_request("/ocs/v1.php/cloud/user", settings=settings))
+    bot_service_base = settings.get("bot_service_base_url") or DEFAULT_BOT_SERVICE_BASE_URL
+    callback_url = settings.get("portal_callback_url")
+    callback_bearer = (settings.get("nextcloud_bot_secret") or "").strip()
+
+    run_step("nextcloud_base_url", lambda: _http_request(f"{settings['nextcloud_base_url']}/status.php", method="GET"))
+    run_step("nextcloud_credentials", lambda: _nc_request("/ocs/v1.php/cloud/user", settings=settings))
     run_step("talk_api", lambda: _nc_request("/ocs/v2.php/apps/spreed/api/v4/room", settings=settings))
     run_step("users_list", lambda: _fetch_nextcloud_users(settings))
-    run_step("room_access", lambda: _create_room(f"portal-check-{uuid.uuid4().hex[:8]}", settings=settings))
+    run_step("bot_service_base_url", lambda: _http_request(bot_service_base, method="GET"))
+    run_step("bot_health", lambda: _http_request(f"{bot_service_base}/health", method="GET"))
+    run_step("bot_id", lambda: _verify_bot_id(settings))
+    run_step("bot_secret", lambda: _verify_bot_secret(settings))
+    run_step("room_access", lambda: _verify_room_access(settings))
+    run_step("bot_schedule_request", lambda: _verify_bot_schedule_request(bot_service_base))
     run_step(
-        "bot_service",
-        lambda: _post_json(
-            f"{(settings.get('bot_service_base_url') or DEFAULT_BOT_SERVICE_BASE_URL)}/api/schedule/request-confirmation",
-            {
-                "roomToken": "connection-check",
-                "scheduleId": f"healthcheck-{uuid.uuid4().hex[:8]}",
-                "doctorId": "connection-check",
-                "doctorNcUserId": "connection-check",
-                "doctorName": "connection-check",
-                "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-                "items": [],
-            },
-        ),
+        "portal_callback",
+        lambda: _verify_portal_callback(callback_url=callback_url, callback_bearer=callback_bearer),
     )
 
     ok = all(item["ok"] for item in checks)
@@ -674,6 +681,98 @@ def _fetch_nextcloud_users(settings: dict[str, Any]) -> list[dict[str, Any]]:
             }
         )
     return users
+
+
+def _http_request(url: str, method: str = "GET", payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    data = None
+    headers = {"Accept": "application/json"}
+    if payload is not None:
+        headers["Content-Type"] = "application/json"
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(url=url, method=method, headers=headers, data=data)
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            raw = response.read().decode("utf-8")
+            parsed: Any = raw
+            if raw:
+                try:
+                    parsed = json.loads(raw)
+                except json.JSONDecodeError:
+                    parsed = raw
+            return {"status": response.status, "body": parsed}
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8")
+        raise RuntimeError(f"HTTP {exc.code}: {body}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Ошибка сети: {exc.reason}") from exc
+
+
+def _verify_bot_id(settings: dict[str, Any]) -> dict[str, Any]:
+    bot_id = str(settings.get("nextcloud_bot_id", "")).strip()
+    if not bot_id:
+        raise RuntimeError("Nextcloud Bot ID не настроен")
+    room = _create_room(f"portal-bot-id-check-{uuid.uuid4().hex[:8]}", settings=settings)
+    room_token = str(room.get("token", "")).strip()
+    if not room_token:
+        raise RuntimeError("Не удалось создать комнату для проверки Bot ID")
+    _add_participant(room_token, bot_id, settings=settings, source="bots")
+    return {"roomToken": room_token, "botId": bot_id}
+
+
+def _verify_bot_secret(settings: dict[str, Any]) -> dict[str, Any]:
+    bot_secret = str(settings.get("nextcloud_bot_secret", "")).strip()
+    if not bot_secret:
+        raise RuntimeError("Nextcloud Bot Secret не настроен")
+    if len(bot_secret) < 16:
+        raise RuntimeError("Nextcloud Bot Secret слишком короткий (минимум 16 символов)")
+    return {"configured": True, "length": len(bot_secret)}
+
+
+def _verify_room_access(settings: dict[str, Any]) -> dict[str, Any]:
+    room = _create_room(f"portal-room-check-{uuid.uuid4().hex[:8]}", settings=settings)
+    room_token = str(room.get("token", "")).strip()
+    if not room_token:
+        raise RuntimeError("Talk API не вернул room token")
+    return {"roomToken": room_token}
+
+
+def _verify_bot_schedule_request(bot_service_base: str) -> dict[str, Any]:
+    return _post_json(
+        f"{bot_service_base}/api/schedule/request-confirmation",
+        {
+            "roomToken": "connection-check",
+            "scheduleId": f"healthcheck-{uuid.uuid4().hex[:8]}",
+            "doctorId": "connection-check",
+            "doctorNcUserId": "connection-check",
+            "doctorName": "connection-check",
+            "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            "items": [],
+        },
+    )
+
+
+def _verify_portal_callback(callback_url: str, callback_bearer: str) -> dict[str, Any]:
+    if not callback_url:
+        raise RuntimeError("Portal Callback URL не настроен")
+    parsed = urllib.parse.urlparse(callback_url)
+    host = parsed.hostname or ""
+    if host in {"127.0.0.1", "localhost"}:
+        raise RuntimeError("Portal Callback URL указывает на loopback и недоступен из Docker-контейнера")
+    try:
+        ip = ipaddress.ip_address(host)
+        if ip.is_loopback:
+            raise RuntimeError("Portal Callback URL указывает на loopback и недоступен из Docker-контейнера")
+    except ValueError:
+        pass
+
+    if not callback_bearer:
+        raise RuntimeError("Nextcloud Bot Secret пустой: callback не пройдет авторизацию")
+    response = _post_json(
+        callback_url,
+        {"type": "connection_check", "checkedAt": _utc_now(), "source": "portal_connection_check"},
+        bearer=callback_bearer,
+    )
+    return {"ok": True, "response": response}
 
 
 def sync_doctors_from_nextcloud(
@@ -766,6 +865,8 @@ def list_schedule_confirmations(limit: int = 100) -> list[dict[str, Any]]:
 
 
 def is_callback_authorized(header_value: str | None) -> bool:
-    if not PORTAL_CALLBACK_BEARER:
+    dynamic_secret = str(get_integration_settings().get("nextcloud_bot_secret", "")).strip()
+    accepted_tokens = [token for token in (dynamic_secret, PORTAL_CALLBACK_BEARER) if token]
+    if not accepted_tokens:
         return False
-    return header_value == f"Bearer {PORTAL_CALLBACK_BEARER}"
+    return any(header_value == f"Bearer {token}" for token in accepted_tokens)
