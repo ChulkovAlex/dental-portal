@@ -17,7 +17,7 @@ import {
 import { appointmentStatusMeta } from '../constants/appointmentStatus';
 import { useSchedule } from '../context/ScheduleContext';
 import type { Appointment, AppointmentStatus, DoctorConfirmation } from '../data/schedule';
-import { sendNextcloudTalkBotMessage } from '../services/integrationModule';
+import { fetchTalkDoctors, sendNextcloudTalkBotMessage } from '../services/integrationModule';
 import {
   addDays,
   addMinutesToTime,
@@ -213,33 +213,34 @@ export default function ScheduleTable() {
     setSendBanner(null);
 
     try {
-      const dateLabel = formatDateHuman(selectedDate, { day: 'numeric', month: 'long', year: 'numeric' });
-      const pendingCount = appointmentsForSelectedDate.filter(
-        (appointment) => appointment.status === 'scheduled' || appointment.status === 'needs-confirmation',
-      ).length;
-
-      const messageLines = [
-        `Расписание на ${dateLabel}:`,
-        ...doctors
-          .filter((doctor) => (dailyScheduleByDoctor.get(doctor.id)?.length ?? 0) > 0)
-          .flatMap((doctor) => {
-            const doctorAppointments = dailyScheduleByDoctor.get(doctor.id) ?? [];
-            return [
-              ``,
-              `${doctor.name} (${doctor.speciality})`,
-              ...doctorAppointments.map(
-                (appointment) =>
-                  `• ${appointment.time}–${addMinutesToTime(appointment.time, appointment.duration)} · ${appointment.patient.name} · ${appointment.procedure} · ${appointment.room}`,
-              ),
-            ];
-          }),
-      ];
-
-      await sendNextcloudTalkBotMessage({
-        dateLabel,
-        pendingCount,
-        messageOverride: messageLines.join('\n'),
-      });
+      const syncedDoctors = await fetchTalkDoctors();
+      const activeDoctors = doctors.filter((doctor) => (dailyScheduleByDoctor.get(doctor.id)?.length ?? 0) > 0);
+      for (const doctor of activeDoctors) {
+        const syncedDoctor =
+          syncedDoctors.find((item) => item.doctorId === doctor.id)
+          ?? syncedDoctors.find((item) => item.doctorName === doctor.name);
+        if (!syncedDoctor) {
+          throw new Error(
+            `Врач «${doctor.name}» не найден в синхронизированном списке Nextcloud. Выполните синхронизацию врачей.`,
+          );
+        }
+        const doctorAppointments = dailyScheduleByDoctor.get(doctor.id) ?? [];
+        await sendNextcloudTalkBotMessage({
+          scheduleId: `sched_${selectedDate.replaceAll('-', '')}_${doctor.id}`,
+          doctorId: syncedDoctor.doctorId,
+          doctorNcUserId: syncedDoctor.doctorNcUserId,
+          doctorName: syncedDoctor.doctorName,
+          date: selectedDate,
+          items: doctorAppointments.map((appointment) => ({
+            time: appointment.time,
+            patient: appointment.patient.name,
+            procedure: appointment.procedure,
+            room: appointment.room,
+            duration: `${appointment.duration} мин`,
+            comment: appointment.note,
+          })),
+        });
+      }
 
       doctors.forEach((doctor) => {
         if ((dailyScheduleByDoctor.get(doctor.id)?.length ?? 0) > 0) {

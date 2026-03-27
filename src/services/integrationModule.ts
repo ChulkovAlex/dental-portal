@@ -52,12 +52,17 @@ export interface DoctorConfirmationSettings {
   reminderHoursBefore: number;
   requireDoctorCommentOnReject: boolean;
   approvalGraceMinutes: number;
-  nextcloudUrl: string;
-  botToken: string;
-  roomToken: string;
+  nextcloudBaseUrl: string;
+  nextcloudServiceUser: string;
+  nextcloudServicePassword: string;
+  nextcloudBotSecret: string;
+  nextcloudBotId: string;
+  botServiceBaseUrl: string;
   messageTemplate: string;
   connected: boolean;
   lastMessageAt?: string;
+  lastConnectionCheckAt?: string;
+  lastConnectionCheckResult?: Array<{ name: string; ok: boolean; detail?: unknown }>;
 }
 
 export interface TalkDoctor {
@@ -67,6 +72,8 @@ export interface TalkDoctor {
   roomToken: string | null;
   roomName: string | null;
   isActive: boolean;
+  lastSyncAt?: string;
+  lastConnectionCheckAt?: string;
 }
 
 interface IntegrationSettingsState {
@@ -109,9 +116,12 @@ const defaultState: IntegrationSettingsState = {
     reminderHoursBefore: 24,
     requireDoctorCommentOnReject: true,
     approvalGraceMinutes: 45,
-    nextcloudUrl: '',
-    botToken: '',
-    roomToken: '',
+    nextcloudBaseUrl: '',
+    nextcloudServiceUser: '',
+    nextcloudServicePassword: '',
+    nextcloudBotSecret: '',
+    nextcloudBotId: '',
+    botServiceBaseUrl: 'http://127.0.0.1:18081',
     messageTemplate:
       'Напоминание: подтвердите расписание на {date}. Неподтверждённых приёмов: {pending}.',
     connected: false,
@@ -557,7 +567,23 @@ export const fetchIdentLogs = async (): Promise<IdentLogEntry[]> => {
 
 export const fetchDoctorConfirmationSettings = async (): Promise<DoctorConfirmationSettings> => {
   const state = readState();
-  return { ...state.doctorConfirmation };
+  try {
+    const response = await fetch('/api/talk/integration-settings');
+    if (!response.ok) {
+      return { ...state.doctorConfirmation };
+    }
+    const payload = (await response.json()) as Partial<DoctorConfirmationSettings>;
+    const merged = {
+      ...state.doctorConfirmation,
+      ...payload,
+    } satisfies DoctorConfirmationSettings;
+    updateState((draft) => {
+      draft.doctorConfirmation = merged;
+    });
+    return merged;
+  } catch {
+    return { ...state.doctorConfirmation };
+  }
 };
 
 export interface UpdateDoctorConfirmationSettingsPayload {
@@ -566,9 +592,12 @@ export interface UpdateDoctorConfirmationSettingsPayload {
   reminderHoursBefore?: number;
   requireDoctorCommentOnReject?: boolean;
   approvalGraceMinutes?: number;
-  nextcloudUrl?: string;
-  botToken?: string;
-  roomToken?: string;
+  nextcloudBaseUrl?: string;
+  nextcloudServiceUser?: string;
+  nextcloudServicePassword?: string;
+  nextcloudBotSecret?: string;
+  nextcloudBotId?: string;
+  botServiceBaseUrl?: string;
   messageTemplate?: string;
   connected?: boolean;
 }
@@ -602,16 +631,28 @@ export const updateDoctorConfirmationSettings = async (
       settings.approvalGraceMinutes = Math.max(5, Math.min(720, Math.round(updates.approvalGraceMinutes)));
     }
 
-    if (typeof updates.nextcloudUrl === 'string') {
-      settings.nextcloudUrl = updates.nextcloudUrl.trim();
+    if (typeof updates.nextcloudBaseUrl === 'string') {
+      settings.nextcloudBaseUrl = updates.nextcloudBaseUrl.trim().replace(/\/+$/, '');
     }
 
-    if (typeof updates.botToken === 'string') {
-      settings.botToken = updates.botToken.trim();
+    if (typeof updates.nextcloudServiceUser === 'string') {
+      settings.nextcloudServiceUser = updates.nextcloudServiceUser.trim();
     }
 
-    if (typeof updates.roomToken === 'string') {
-      settings.roomToken = updates.roomToken.trim();
+    if (typeof updates.nextcloudServicePassword === 'string') {
+      settings.nextcloudServicePassword = updates.nextcloudServicePassword;
+    }
+
+    if (typeof updates.nextcloudBotSecret === 'string') {
+      settings.nextcloudBotSecret = updates.nextcloudBotSecret;
+    }
+
+    if (typeof updates.nextcloudBotId === 'string') {
+      settings.nextcloudBotId = updates.nextcloudBotId.trim();
+    }
+
+    if (typeof updates.botServiceBaseUrl === 'string') {
+      settings.botServiceBaseUrl = updates.botServiceBaseUrl.trim().replace(/\/+$/, '');
     }
 
     if (typeof updates.messageTemplate === 'string') {
@@ -621,77 +662,133 @@ export const updateDoctorConfirmationSettings = async (
     if (typeof updates.connected === 'boolean') {
       settings.connected = updates.connected;
     } else {
-      settings.connected = Boolean(settings.nextcloudUrl && settings.botToken && settings.roomToken);
+      settings.connected = Boolean(
+        settings.nextcloudBaseUrl &&
+          settings.nextcloudServiceUser &&
+          settings.nextcloudServicePassword &&
+          settings.nextcloudBotSecret,
+      );
     }
 
     state.doctorConfirmation = settings;
     return state;
   });
 
+  try {
+    const response = await fetch('/api/talk/integration-settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
+    if (response.ok) {
+      const payload = (await response.json()) as Partial<DoctorConfirmationSettings>;
+      const merged = { ...next.doctorConfirmation, ...payload } satisfies DoctorConfirmationSettings;
+      updateState((state) => {
+        state.doctorConfirmation = merged;
+      });
+      return merged;
+    }
+  } catch {
+    // keep local fallback
+  }
   return { ...next.doctorConfirmation };
 };
 
 export interface SendNextcloudMessagePayload {
-  dateLabel: string;
-  pendingCount: number;
-  messageOverride?: string;
+  scheduleId: string;
+  doctorId: string;
+  doctorNcUserId?: string;
+  doctorName?: string;
+  date: string;
+  items: Array<{
+    time: string;
+    patient: string;
+    procedure: string;
+    room: string;
+    assistants?: string[];
+    duration?: string;
+    comment?: string;
+  }>;
 }
 
 export const sendNextcloudTalkBotMessage = async (
   payload: SendNextcloudMessagePayload,
 ): Promise<{ sentAt: string; requestUrl?: string }> => {
-  const settings = await fetchDoctorConfirmationSettings();
-
-  if (!settings.nextcloudUrl || !settings.botToken || !settings.roomToken) {
-    throw new Error('Заполните URL Nextcloud, Bot Token и Room Token перед отправкой.');
-  }
-
-  const baseUrl = settings.nextcloudUrl.replace(/\/+$/, '');
-  const requestUrl = `${baseUrl}/ocs/v2.php/apps/spreed/api/v1/chat/${encodeURIComponent(
-    settings.roomToken,
-  )}`;
-
-  const formattedMessage = payload.messageOverride?.trim()
-    ? payload.messageOverride.trim()
-    : settings.messageTemplate
-      .replaceAll('{date}', payload.dateLabel)
-      .replaceAll('{pending}', String(payload.pendingCount));
-
-  let proxyResponse: Response;
-
-  try {
-    proxyResponse = await fetch('/api/talk/send-test-message', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        nextcloudUrl: baseUrl,
-        botToken: settings.botToken,
-        roomToken: settings.roomToken,
-        message: formattedMessage,
-      }),
-    });
-  } catch (error) {
-    throw new Error(
-      'Не удалось подключиться к API Talk (/api/talk/send-test-message). Проверьте, что backend запущен и прокси /api настроен.',
-    );
-  }
-
+  const proxyResponse = await fetch('/api/talk/schedule/request-confirmation', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
   if (!proxyResponse.ok) {
     const proxyPayload = (await proxyResponse.json().catch(() => null)) as { error?: string } | null;
-    throw new Error(
-      proxyPayload?.error || `Не удалось отправить сообщение через сервер (HTTP ${proxyResponse.status}).`,
-    );
+    throw new Error(proxyPayload?.error || `Не удалось отправить расписание (HTTP ${proxyResponse.status}).`);
   }
-
   const sentAt = new Date().toISOString();
   updateState((state) => {
     state.doctorConfirmation.lastMessageAt = sentAt;
     state.doctorConfirmation.connected = true;
   });
 
-  return { sentAt, requestUrl };
+  return { sentAt };
+};
+
+export const checkNextcloudTalkConnection = async (): Promise<{
+  ok: boolean;
+  checkedAt: string;
+  checks: Array<{ name: string; ok: boolean; detail?: unknown }>;
+}> => {
+  const response = await fetch('/api/talk/connection-check', { method: 'POST' });
+  const payload = (await response.json().catch(() => null)) as
+    | { ok?: boolean; checkedAt?: string; checks?: Array<{ name: string; ok: boolean; detail?: unknown }>; error?: string }
+    | null;
+  if (!payload) {
+    throw new Error('Пустой ответ проверки соединения.');
+  }
+  if (!response.ok && !payload.ok) {
+    throw new Error(payload.error ?? 'Проверка соединения не прошла.');
+  }
+  const result = {
+    ok: Boolean(payload.ok),
+    checkedAt: payload.checkedAt ?? new Date().toISOString(),
+    checks: payload.checks ?? [],
+  };
+  updateState((state) => {
+    state.doctorConfirmation.connected = result.ok;
+    state.doctorConfirmation.lastConnectionCheckAt = result.checkedAt;
+    state.doctorConfirmation.lastConnectionCheckResult = result.checks;
+  });
+  return result;
+};
+
+export const syncTalkDoctorsFromNextcloud = async (payload?: {
+  includeOnly?: string[];
+  excludeUsers?: string[];
+}): Promise<{ ok: boolean; syncedAt: string; count: number }> => {
+  const response = await fetch('/api/talk/doctors/sync', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload ?? {}),
+  });
+  const json = (await response.json().catch(() => null)) as { error?: string; ok?: boolean; syncedAt?: string; count?: number } | null;
+  if (!response.ok || !json?.ok) {
+    throw new Error(json?.error ?? 'Не удалось синхронизировать врачей.');
+  }
+  return { ok: true, syncedAt: json.syncedAt ?? new Date().toISOString(), count: json.count ?? 0 };
+};
+
+export const fetchTalkDoctorSyncLogs = async (): Promise<Array<{ status: string; message: string; created_at: string }>> => {
+  try {
+    const response = await fetch('/api/talk/doctors/sync-logs?limit=50');
+    if (!response.ok) {
+      return [];
+    }
+    const payload = (await response.json()) as Array<{ status: string; message: string; created_at: string }>;
+    return Array.isArray(payload) ? payload : [];
+  } catch {
+    return [];
+  }
 };
 
 const mapTalkDoctor = (item: unknown): TalkDoctor | null => {
@@ -715,6 +812,9 @@ const mapTalkDoctor = (item: unknown): TalkDoctor | null => {
     roomToken: typeof value.roomToken === 'string' && value.roomToken.trim() ? value.roomToken : null,
     roomName: typeof value.roomName === 'string' && value.roomName.trim() ? value.roomName : null,
     isActive: Boolean(value.isActive),
+    lastSyncAt: typeof value.lastSyncAt === 'string' ? value.lastSyncAt : undefined,
+    lastConnectionCheckAt:
+      typeof value.lastConnectionCheckAt === 'string' ? value.lastConnectionCheckAt : undefined,
   } satisfies TalkDoctor;
 };
 
