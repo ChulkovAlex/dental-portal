@@ -13,12 +13,17 @@ from portal.talk import (
     delete_doctor,
     ensure_doctor_room,
     get_doctor,
+    get_integration_settings,
+    list_doctor_sync_logs,
     handle_schedule_response,
     init_talk_storage,
     is_callback_authorized,
     list_doctors,
     list_schedule_confirmations,
+    run_connection_check,
     send_schedule_confirmation_by_payload,
+    sync_doctors_from_nextcloud,
+    update_integration_settings,
 )
 
 bp = Blueprint("talk_api", __name__, url_prefix="/api/talk")
@@ -31,7 +36,21 @@ def ensure_talk_initialized() -> None:
 
 @bp.get("/doctors")
 def doctors_list():
-    return jsonify(list_doctors())
+    return jsonify(
+        [
+            {
+                "doctorId": doctor["id"],
+                "doctorName": doctor["full_name"],
+                "doctorNcUserId": doctor["nc_user_id"],
+                "roomToken": doctor.get("room_token"),
+                "roomName": doctor.get("room_name"),
+                "isActive": bool(doctor.get("is_active", 0)),
+                "lastSyncAt": doctor.get("last_sync_at"),
+                "lastConnectionCheckAt": doctor.get("last_connection_check_at"),
+            }
+            for doctor in list_doctors()
+        ]
+    )
 
 
 @bp.get("/doctors/<doctor_id>")
@@ -47,6 +66,8 @@ def doctor_get(doctor_id: str):
             "roomToken": doctor.get("room_token"),
             "roomName": doctor.get("room_name"),
             "isActive": bool(doctor.get("is_active", 0)),
+            "lastSyncAt": doctor.get("last_sync_at"),
+            "lastConnectionCheckAt": doctor.get("last_connection_check_at"),
         }
     )
 
@@ -80,6 +101,8 @@ def doctors_upsert():
             "roomToken": doctor.get("room_token"),
             "roomName": doctor.get("room_name"),
             "isActive": bool(doctor.get("is_active", 0)),
+            "lastSyncAt": doctor.get("last_sync_at"),
+            "lastConnectionCheckAt": doctor.get("last_connection_check_at"),
         }
     )
 
@@ -115,6 +138,8 @@ def doctors_update(doctor_id: str):
             "roomToken": doctor.get("room_token"),
             "roomName": doctor.get("room_name"),
             "isActive": bool(doctor.get("is_active", 0)),
+            "lastSyncAt": doctor.get("last_sync_at"),
+            "lastConnectionCheckAt": doctor.get("last_connection_check_at"),
         }
     )
 
@@ -144,8 +169,76 @@ def doctor_ensure_room(doctor_id: str):
             "roomToken": doctor.get("room_token"),
             "roomName": doctor.get("room_name"),
             "isActive": bool(doctor.get("is_active", 0)),
+            "lastSyncAt": doctor.get("last_sync_at"),
+            "lastConnectionCheckAt": doctor.get("last_connection_check_at"),
         }
     )
+
+
+@bp.get("/integration-settings")
+def integration_settings_get():
+    settings = get_integration_settings()
+    return jsonify(
+        {
+            "nextcloudBaseUrl": settings["nextcloud_base_url"],
+            "nextcloudServiceUser": settings["nextcloud_service_user"],
+            "nextcloudServicePassword": settings["nextcloud_service_password"],
+            "nextcloudBotSecret": settings["nextcloud_bot_secret"],
+            "nextcloudBotId": settings["nextcloud_bot_id"],
+            "botServiceBaseUrl": settings["bot_service_base_url"],
+            "connected": bool(settings["connected"]),
+            "lastConnectionCheckAt": settings["last_connection_check_at"],
+            "lastConnectionCheckResult": settings.get("last_connection_check_result"),
+        }
+    )
+
+
+@bp.put("/integration-settings")
+def integration_settings_put():
+    payload = request.get_json(silent=True) or {}
+    settings = update_integration_settings(payload)
+    return jsonify(
+        {
+            "nextcloudBaseUrl": settings["nextcloud_base_url"],
+            "nextcloudServiceUser": settings["nextcloud_service_user"],
+            "nextcloudServicePassword": settings["nextcloud_service_password"],
+            "nextcloudBotSecret": settings["nextcloud_bot_secret"],
+            "nextcloudBotId": settings["nextcloud_bot_id"],
+            "botServiceBaseUrl": settings["bot_service_base_url"],
+            "connected": bool(settings["connected"]),
+            "lastConnectionCheckAt": settings["last_connection_check_at"],
+            "lastConnectionCheckResult": settings.get("last_connection_check_result"),
+        }
+    )
+
+
+@bp.post("/connection-check")
+def integration_connection_check():
+    result = run_connection_check()
+    status = 200 if result.get("ok") else 502
+    return jsonify(result), status
+
+
+@bp.post("/doctors/sync")
+def doctors_sync():
+    payload = request.get_json(silent=True) or {}
+    include_only = payload.get("includeOnly")
+    exclude_users = payload.get("excludeUsers")
+    if include_only is not None and not isinstance(include_only, list):
+        return jsonify({"error": "includeOnly должен быть массивом"}), 400
+    if exclude_users is not None and not isinstance(exclude_users, list):
+        return jsonify({"error": "excludeUsers должен быть массивом"}), 400
+    try:
+        result = sync_doctors_from_nextcloud(include_only=include_only, exclude_users=exclude_users)
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 502
+    return jsonify(result)
+
+
+@bp.get("/doctors/sync-logs")
+def doctors_sync_logs():
+    limit = int(request.args.get("limit", 50))
+    return jsonify(list_doctor_sync_logs(limit=limit))
 
 
 @bp.post("/schedule/request-confirmation")
