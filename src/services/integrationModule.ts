@@ -60,6 +60,15 @@ export interface DoctorConfirmationSettings {
   lastMessageAt?: string;
 }
 
+export interface TalkDoctor {
+  doctorId: string;
+  doctorName: string;
+  doctorNcUserId: string;
+  roomToken: string | null;
+  roomName: string | null;
+  isActive: boolean;
+}
+
 interface IntegrationSettingsState {
   userExtensions: Record<string, { phone?: string; telegramHandle?: string }>;
   telegram: TelegramIntegrationSettings;
@@ -648,18 +657,26 @@ export const sendNextcloudTalkBotMessage = async (
       .replaceAll('{date}', payload.dateLabel)
       .replaceAll('{pending}', String(payload.pendingCount));
 
-  const proxyResponse = await fetch('/api/talk/send-test-message', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      nextcloudUrl: baseUrl,
-      botToken: settings.botToken,
-      roomToken: settings.roomToken,
-      message: formattedMessage,
-    }),
-  });
+  let proxyResponse: Response;
+
+  try {
+    proxyResponse = await fetch('/api/talk/send-test-message', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        nextcloudUrl: baseUrl,
+        botToken: settings.botToken,
+        roomToken: settings.roomToken,
+        message: formattedMessage,
+      }),
+    });
+  } catch (error) {
+    throw new Error(
+      'Не удалось подключиться к API Talk (/api/talk/send-test-message). Проверьте, что backend запущен и прокси /api настроен.',
+    );
+  }
 
   if (!proxyResponse.ok) {
     const proxyPayload = (await proxyResponse.json().catch(() => null)) as { error?: string } | null;
@@ -675,6 +692,79 @@ export const sendNextcloudTalkBotMessage = async (
   });
 
   return { sentAt, requestUrl };
+};
+
+const mapTalkDoctor = (item: unknown): TalkDoctor | null => {
+  if (!item || typeof item !== 'object') {
+    return null;
+  }
+
+  const value = item as Record<string, unknown>;
+  const doctorId = typeof value.doctorId === 'string' ? value.doctorId.trim() : '';
+  const doctorName = typeof value.doctorName === 'string' ? value.doctorName.trim() : '';
+  const doctorNcUserId = typeof value.doctorNcUserId === 'string' ? value.doctorNcUserId.trim() : '';
+
+  if (!doctorId || !doctorName || !doctorNcUserId) {
+    return null;
+  }
+
+  return {
+    doctorId,
+    doctorName,
+    doctorNcUserId,
+    roomToken: typeof value.roomToken === 'string' && value.roomToken.trim() ? value.roomToken : null,
+    roomName: typeof value.roomName === 'string' && value.roomName.trim() ? value.roomName : null,
+    isActive: Boolean(value.isActive),
+  } satisfies TalkDoctor;
+};
+
+export const fetchTalkDoctors = async (): Promise<TalkDoctor[]> => {
+  try {
+    const response = await fetch('/api/talk/doctors');
+    if (!response.ok) {
+      return [];
+    }
+    const payload = (await response.json()) as unknown;
+    if (!Array.isArray(payload)) {
+      return [];
+    }
+
+    return payload
+      .map((item) => mapTalkDoctor(item))
+      .filter((item): item is TalkDoctor => Boolean(item))
+      .sort((a, b) => a.doctorName.localeCompare(b.doctorName, 'ru'));
+  } catch {
+    return [];
+  }
+};
+
+export interface UpsertTalkDoctorPayload {
+  doctorId: string;
+  doctorName: string;
+  doctorNcUserId: string;
+  isActive: boolean;
+}
+
+export const upsertTalkDoctor = async (payload: UpsertTalkDoctorPayload): Promise<TalkDoctor> => {
+  const response = await fetch('/api/talk/doctors', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const json = (await response.json().catch(() => null)) as { error?: string } | TalkDoctor | null;
+  if (!response.ok) {
+    throw new Error((json as { error?: string } | null)?.error ?? 'Не удалось сохранить доктора.');
+  }
+
+  const mapped = mapTalkDoctor(json);
+  if (!mapped) {
+    throw new Error('API Talk вернул некорректные данные доктора.');
+  }
+
+  return mapped;
 };
 
 const sanitizeLogInput = (entry: IdentLogEntry): IdentLogEntry => {
