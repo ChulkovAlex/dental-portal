@@ -15,7 +15,7 @@ const navItems = [
   { to: '/schedule', label: 'Расписание', icon: CalendarRange },
   { to: '/approve', label: 'Заявки', icon: ClipboardCheck },
   { to: '/reject', label: 'Отказы', icon: Ban },
-  { to: '/doctor-confirmation-settings', label: 'Подтв. расписания', icon: CalendarCheck2 },
+  { to: '/doctor-confirmation-settings', label: 'Настройки подтверждения', icon: CalendarCheck2 },
   { to: '/settings', label: 'Настройки', icon: Settings2 },
 ];
 
