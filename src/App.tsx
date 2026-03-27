@@ -116,7 +116,7 @@ const App = () => {
     }
 
     setStatusText('Отправка расписания врачу...');
-    const response = await fetch('/api/talk/schedule/request-confirmation', {
+    const response = await fetch('/api/talk/internal/send-schedule-to-talk', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -192,6 +192,12 @@ const App = () => {
             <button type="button" className="btn-primary" onClick={onSendSchedule}>Отправить расписание на подтверждение</button>
           </div>
           <p className="mt-2 text-sm text-gray-700">Выбранный доктор: {selectedDoctor ? `${selectedDoctor.full_name} (${selectedDoctor.id})` : 'не выбран'}</p>
+          <p className="mt-2 text-sm text-gray-700">
+            Endpoint отправки: <code>/api/talk/internal/send-schedule-to-talk</code>
+          </p>
+          <p className="mt-2 text-sm text-gray-700">
+            Callback от бота: <code>/api/talk/schedule-response</code> (Bearer-токен обязателен).
+          </p>
           <p className="mt-2 text-sm font-medium text-blue-700">{statusText}</p>
         </section>
 
