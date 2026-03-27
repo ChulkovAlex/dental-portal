@@ -104,9 +104,13 @@ Added backend module for doctor directory and schedule confirmations via Nextclo
 ### New API endpoints
 
 - `GET /api/talk/doctors`
+- `GET /api/talk/doctors/<doctor_id>`
 - `POST /api/talk/doctors`
+- `PUT /api/talk/doctors/<doctor_id>`
+- `DELETE /api/talk/doctors/<doctor_id>`
 - `POST /api/talk/doctors/<doctor_id>/room`
 - `POST /api/talk/schedule/request-confirmation`
+- `POST /api/talk/internal/send-schedule-to-talk`
 - `GET /api/talk/schedule/confirmations`
 - `POST /api/talk/schedule-response` (Bearer auth via `PORTAL_CALLBACK_BEARER`)
 
@@ -124,3 +128,11 @@ Added backend module for doctor directory and schedule confirmations via Nextclo
 - `NEXTCLOUD_BOT_SECRET`
 - `BOT_SERVICE_BASE_URL`
 - `PORTAL_CALLBACK_BEARER`
+
+### Production notes (critical)
+
+- Do not use a placeholder secret (`changeme...`) for `NEXTCLOUD_BOT_SECRET`; use a strong random value in production.
+- Do not test portal callback from bot with `127.0.0.1` inside a container. For Docker this is container-local loopback, not the host/portal.
+- Use either:
+  - an external portal URL (for example `https://portal.docdenisenko.ru/api/talk/schedule-response`), or
+  - a dedicated service URL in the same Docker network.

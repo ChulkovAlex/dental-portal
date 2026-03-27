@@ -91,6 +91,12 @@ def list_doctors() -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+def get_doctor_by_nc_user_id(nc_user_id: str) -> dict[str, Any] | None:
+    with _db_connection() as conn:
+        row = conn.execute("SELECT * FROM doctors WHERE nc_user_id = ?", (nc_user_id,)).fetchone()
+    return dict(row) if row else None
+
+
 def create_or_update_doctor(
     doctor_id: str,
     full_name: str,
@@ -128,6 +134,13 @@ def get_doctor(doctor_id: str) -> dict[str, Any] | None:
     with _db_connection() as conn:
         row = conn.execute("SELECT * FROM doctors WHERE id = ?", (doctor_id,)).fetchone()
     return dict(row) if row else None
+
+
+def delete_doctor(doctor_id: str) -> bool:
+    with _db_connection() as conn:
+        deleted = conn.execute("DELETE FROM doctors WHERE id = ?", (doctor_id,))
+        conn.commit()
+    return deleted.rowcount > 0
 
 
 def _nc_request(path: str, method: str = "GET", payload: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -318,6 +331,23 @@ def send_schedule_confirmation(
     }
 
 
+def send_schedule_confirmation_by_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    doctor_id = str(payload.get("doctorId", "")).strip()
+    schedule_id = str(payload.get("scheduleId", "")).strip()
+    schedule_date = str(payload.get("date", "")).strip()
+    items = payload.get("items") or []
+
+    if not doctor_id or not schedule_id or not schedule_date or not isinstance(items, list):
+        raise ValueError("doctorId, scheduleId, date и items обязательны")
+
+    return send_schedule_confirmation(
+        doctor_id=doctor_id,
+        schedule_id=schedule_id,
+        schedule_date=schedule_date,
+        items=items,
+    )
+
+
 def handle_schedule_response(payload: dict[str, Any]) -> dict[str, Any]:
     schedule_id = str(payload.get("scheduleId", "")).strip()
     doctor_id = str(payload.get("doctorId", "")).strip()
@@ -338,6 +368,8 @@ def handle_schedule_response(payload: dict[str, Any]) -> dict[str, Any]:
         ).fetchone()
         if existing is None:
             raise LookupError("Запись schedule confirmation не найдена")
+        if existing["doctor_id"] != doctor_id:
+            raise LookupError("doctorId в callback не совпадает с записью schedule confirmation")
 
         conn.execute(
             """
