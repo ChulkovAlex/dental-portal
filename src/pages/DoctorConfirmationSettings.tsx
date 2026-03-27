@@ -77,8 +77,6 @@ export default function DoctorConfirmationSettingsPage() {
         nextcloudBaseUrl: form.nextcloudBaseUrl,
         nextcloudServiceUser: form.nextcloudServiceUser,
         nextcloudServicePassword: form.nextcloudServicePassword,
-        nextcloudBotSecret: form.nextcloudBotSecret,
-        nextcloudBotId: form.nextcloudBotId,
         botServiceBaseUrl: form.botServiceBaseUrl,
         portalCallbackUrl: form.portalCallbackUrl,
         messageTemplate: form.messageTemplate,
@@ -171,14 +169,6 @@ export default function DoctorConfirmationSettingsPage() {
               <span>Nextcloud Service Password / App Password</span>
               <input type="password" value={form?.nextcloudServicePassword ?? ''} onChange={(event) => updateField('nextcloudServicePassword', event.target.value)} className="input-field" />
             </label>
-            <label className="space-y-1 text-sm">
-              <span>Nextcloud Bot Secret</span>
-              <input type="password" value={form?.nextcloudBotSecret ?? ''} onChange={(event) => updateField('nextcloudBotSecret', event.target.value)} className="input-field" />
-            </label>
-            <label className="space-y-1 text-sm">
-              <span>Nextcloud Bot ID</span>
-              <input type="text" value={form?.nextcloudBotId ?? ''} onChange={(event) => updateField('nextcloudBotId', event.target.value)} className="input-field" />
-            </label>
             <label className="space-y-1 text-sm lg:col-span-2">
               <span>Portal Callback URL (для backend бота)</span>
               <input
@@ -192,6 +182,12 @@ export default function DoctorConfirmationSettingsPage() {
                 Не используйте localhost/127.0.0.1 для callback, если бот работает в Docker-контейнере.
               </p>
             </label>
+            <div className="space-y-1 rounded-xl border border-page/40 bg-page/5 p-3 text-sm lg:col-span-2">
+              <p className="font-medium">Параметры бота управляются сервером</p>
+              <p className="text-xs text-page/70">
+                Bot ID и Bot Secret больше не редактируются вручную в интерфейсе портала, чтобы избежать рассинхронизации с Talk-ботом.
+              </p>
+            </div>
           </div>
           {banner ? <p className={`rounded-lg px-3 py-2 text-sm ${banner.type === 'success' ? 'bg-emerald-500/10 text-emerald-700' : 'bg-red-500/10 text-red-700'}`}>{banner.text}</p> : null}
           <div className="flex flex-wrap items-center gap-3">
