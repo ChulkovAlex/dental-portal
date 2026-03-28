@@ -746,27 +746,55 @@ export const checkNextcloudTalkConnection = async (): Promise<{
   checkedAt: string;
   checks: Array<{ name: string; ok: boolean; detail?: unknown }>;
 }> => {
-  const response = await fetch('/api/talk/connection-check', { method: 'POST' });
+  const settings = await fetchDoctorConfirmationSettings();
+
+  const response = await fetch('/api/nextcloud/test-connection', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      baseUrl: settings.nextcloudBaseUrl,
+      username: settings.nextcloudServiceUser,
+      password: settings.nextcloudServicePassword,
+    }),
+  });
+
   const payload = (await response.json().catch(() => null)) as
-    | { ok?: boolean; checkedAt?: string; checks?: Array<{ name: string; ok: boolean; detail?: unknown }>; error?: string }
+    | { success?: boolean; user?: string; displayName?: string; groups?: string[]; rawStatus?: number; error?: string }
     | null;
+
   if (!payload) {
     throw new Error('Пустой ответ проверки соединения.');
   }
-  if (!response.ok && !payload.ok) {
+
+  if (!response.ok || !payload.success) {
     throw new Error(payload.error ?? 'Проверка соединения не прошла.');
   }
-  const result = {
-    ok: Boolean(payload.ok),
-    checkedAt: payload.checkedAt ?? new Date().toISOString(),
-    checks: payload.checks ?? [],
-  };
+
+  const checkedAt = new Date().toISOString();
+  const checks = [
+    {
+      name: 'nextcloud_credentials',
+      ok: true,
+      detail: {
+        user: payload.user,
+        displayName: payload.displayName,
+        groups: payload.groups ?? [],
+        rawStatus: payload.rawStatus,
+      },
+    },
+  ];
+
   updateState((state) => {
-    state.doctorConfirmation.connected = result.ok;
-    state.doctorConfirmation.lastConnectionCheckAt = result.checkedAt;
-    state.doctorConfirmation.lastConnectionCheckResult = result.checks;
+    state.doctorConfirmation.connected = true;
+    state.doctorConfirmation.lastConnectionCheckAt = checkedAt;
+    state.doctorConfirmation.lastConnectionCheckResult = checks;
   });
-  return result;
+
+  return {
+    ok: true,
+    checkedAt,
+    checks,
+  };
 };
 
 export const syncTalkDoctorsFromNextcloud = async (payload?: {
